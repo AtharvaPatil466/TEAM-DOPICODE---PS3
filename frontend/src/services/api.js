@@ -324,25 +324,15 @@ function buildNodeDetails(graphModel, assetsById, latestScan) {
   return details;
 }
 
-async function buildKillChainSteps(attackPath, assetsById, latestScan) {
-  // Helper to get LLM rationale for a hop
-  const getHopRationale = async (hop, index) => {
-    const asset = assetsById[hop.asset_id];
-    if (!asset || !hop.rule_id) return null;
-
-    const prompt = buildHopRationalePrompt(
-      assetLabel(asset),
-      hop.rule_id,
-      hop.cve_id,
-      hop.cvss
-    );
-    return generateNarrative(prompt);
-  };
+function buildKillChainSteps(attackPath, assetsById, latestScan) {
+  const pathConfidence = attackPath.validation?.confidence || null;
+  const hopResults = attackPath.validation?.hop_results || [];
 
   const steps = [
     {
       title: "External discovery",
-      summary: `The replay starts from ${latestScan.domain} and walks the ${latestScan.total_assets}-asset cached surface in deterministic order.`
+      summary: `The replay starts from ${latestScan.domain} and walks the ${latestScan.total_assets}-asset cached surface in deterministic order.`,
+      pathConfidence
     }
   ];
 
@@ -354,28 +344,27 @@ async function buildKillChainSteps(attackPath, assetsById, latestScan) {
     return steps;
   }
 
-  // Generate LLM rationales for each hop in parallel
-  const hopRationales = await Promise.all(
-    attackPath.hops.map((hop, index) => getHopRationale(hop, index))
-  );
-
   attackPath.hops.forEach((hop, index) => {
     const asset = assetsById[hop.asset_id];
     const exposure = asset ? summarizeExposure(asset) : null;
-    const llmRationale = hopRationales[index];
 
-    // Use LLM rationale if available, otherwise fallback to static explanation
-    const summary = llmRationale || (exposure
+    // Use deterministic fallback as the base summary
+    const summary = (exposure
       ? `${assetLabel(asset)} becomes the next step because ${exposure.reason.toLowerCase()}`
       : `${hop.label} is included in the cached attack path.`);
 
+    const probe = hopResults[index];
     steps.push({
       title: index === attackPath.hops.length - 1 ? "Objective reached" : `Hop ${index + 1}`,
       summary,
       ruleId: hop.rule_id,
       technique: hop.attack_techniques?.[0],
       cveId: hop.cve_id,
-      hasLlmRationale: !!llmRationale
+      hasLlmRationale: !!llmRationale,
+      probeSuccess: probe?.success ?? null,
+      probePort: probe?.port ?? null,
+      probeLatencyMs: probe?.latency_ms ?? null,
+      probeError: probe?.error ?? null
     });
   });
 
@@ -392,7 +381,7 @@ async function buildKillChainSteps(attackPath, assetsById, latestScan) {
   return steps.slice(0, 4);
 }
 
-async function buildReportSections(latestScan, findingRows, attackPath, impactData, assets) {
+function buildReportSections(latestScan, findingRows, attackPath, impactData, assets) {
   const criticalCount = findingRows.filter((row) => row.severity === "Critical").length;
   const lead = findingRows[0];
 
@@ -406,13 +395,11 @@ async function buildReportSections(latestScan, findingRows, attackPath, impactDa
   const crownJewel = assets?.find((a) => a.is_crown_jewel);
   const crownJewelLabel = crownJewel ? assetLabel(crownJewel) : null;
 
-  // Generate LLM analyst narrative
   const reportPrompt = buildAnalystReportPrompt(
     latestScan.total_assets,
     criticalCves,
     crownJewelLabel
   );
-  const analystNarrative = await generateNarrative(reportPrompt);
 
   const sections = [
     {
@@ -435,10 +422,10 @@ async function buildReportSections(latestScan, findingRows, attackPath, impactDa
       : "No prioritized findings are cached yet."
   });
 
-  // Use LLM-generated analyst narrative or fallback to server narrative
   sections.push({
     heading: "Analyst narrative",
-    body: analystNarrative || attackPath.narrative || "No attack path narrative has been computed for the current cached scan."
+    body: attackPath.narrative || "No attack path narrative has been computed for the current cached scan.",
+    prompt: reportPrompt
   });
 
   sections.push({
@@ -449,7 +436,7 @@ async function buildReportSections(latestScan, findingRows, attackPath, impactDa
   return sections;
 }
 
-async function buildNarrative(latestScan, attackPath, findingRows) {
+function buildNarrative(latestScan, attackPath, findingRows) {
   // Fallback if LLM is unavailable
   const fallback = () => {
     if (attackPath.narrative) {
@@ -473,8 +460,10 @@ async function buildNarrative(latestScan, attackPath, findingRows) {
     topCve
   );
 
-  const llmResponse = await generateNarrative(prompt);
-  return llmResponse || fallback();
+  return {
+    fallback: fallback(),
+    prompt: prompt
+  };
 }
 
 function buildEmptyDashboard(message) {
@@ -651,12 +640,26 @@ export async function fetchDashboardData() {
     const storageFindings = assets.filter((asset) => asset.asset_type === "storage").length;
     const maxRisk = Math.max(...assets.map((asset) => asset.risk_score || 0), 0);
 
-    // Build LLM-enhanced content in parallel
-    const [narrative, killChainSteps, reportSections] = await Promise.all([
-      buildNarrative(latestScan, attackPath, findingRows),
-      buildKillChainSteps(attackPath, assetsById, latestScan),
-      buildReportSections(latestScan, findingRows, attackPath, impactData, assets)
-    ]);
+    const allPathValidations = [
+      attackPath.validation,
+      ...(attackPath.alternates || []).map((p) => p.validation)
+    ].filter(Boolean);
+    const validationCounts = allPathValidations.reduce(
+      (acc, v) => {
+        const c = v.confidence;
+        if (c === "CONFIRMED") acc.confirmed += 1;
+        else if (c === "PARTIAL") acc.partial += 1;
+        else acc.unverified += 1;
+        acc.total += 1;
+        return acc;
+      },
+      { confirmed: 0, partial: 0, unverified: 0, total: 0 }
+    );
+
+    // Build LLM-enhanced content synchronously (pass promises/prompts down)
+    const narrative = buildNarrative(latestScan, attackPath, findingRows);
+    const killChainSteps = buildKillChainSteps(attackPath, assetsById, latestScan);
+    const reportSections = buildReportSections(latestScan, findingRows, attackPath, impactData, assets);
 
     return {
       latestScan,
@@ -673,8 +676,14 @@ export async function fetchDashboardData() {
           tone: storageFindings ? "warning" : "neutral"
         },
         { label: "Breach Exposure", value: impactData ? impactData.total_formatted.split(" - ")[1] : "Calculating...", tone: "critical" },
-        { label: "Executive risk", value: `${(maxRisk / 10).toFixed(1)} / 10`, tone: "critical" }
+        { label: "Executive risk", value: `${(maxRisk / 10).toFixed(1)} / 10`, tone: "critical" },
+        {
+          label: "Paths verified",
+          value: `${validationCounts.confirmed} / ${validationCounts.total}`,
+          tone: validationCounts.confirmed === validationCounts.total && validationCounts.total > 0 ? "positive" : "warning"
+        }
       ],
+      validationCounts,
       narrative,
       topActions: buildTopActions(findingRows),
       findingRows,
