@@ -32,10 +32,10 @@ function ScanPage() {
         } else if (event.type === "attack_path_computed") {
           setValidationSummary(event.payload.validation_summary || null);
           setValidationPhase("done");
-          setEvents(e => [`[${new Date(event.timestamp).toLocaleTimeString()}] Attack paths validated: ${(event.payload.validation_summary?.confirmed) ?? 0}/${(event.payload.validation_summary?.total) ?? 0} confirmed`, ...e]);
+          setEvents(e => [`[${new Date(event.timestamp).toLocaleTimeString()}] Issues confirmed: ${(event.payload.validation_summary?.confirmed) ?? 0}/${(event.payload.validation_summary?.total) ?? 0} confirmed`, ...e]);
         } else if (event.type === "host_discovered") {
           setMetrics(m => ({ ...m, assets: m.assets + 1 }));
-          setEvents(e => [`[${new Date(event.timestamp).toLocaleTimeString()}] Host discovered: ${event.payload.hostname || event.payload.ip}`, ...e]);
+          setEvents(e => [`[${new Date(event.timestamp).toLocaleTimeString()}] Computer found: ${event.payload.hostname || event.payload.ip}`, ...e]);
         } else if (event.type === "cve_found") {
           setMetrics(m => ({ ...m, cves: m.cves + 1 }));
         } else if (event.type === "scan_completed") {
@@ -90,13 +90,13 @@ function ScanPage() {
     <section className="page scan-page">
       <div className="panel">
         <p className="eyebrow">Initialize</p>
-        <h2>Configure Scan & Impact Profile</h2>
-        <p className="section-copy">Define the technical scope and the business profile for financial modeling.</p>
+        <h2>Business Profile Setup</h2>
+        <p className="section-copy">Tell us a bit about your business so we can estimate risk accurately.</p>
         
         <form className="scan-form" onSubmit={handleStart}>
           <div className="toggle-row">
             <label>
-              Root Domain
+              Enter your company website
               <input value={domain} onChange={e => setDomain(e.target.value)} required />
               <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginTop: "0.25rem" }}>
                 <span className="section-copy" style={{ fontSize: "0.8rem", alignSelf: "center" }}>Suggested:</span>
@@ -106,7 +106,7 @@ function ScanPage() {
               </div>
             </label>
             <label>
-              Internal Subnet (Optional)
+              Internal Network (Optional)
               <input value={subnet} onChange={e => setSubnet(e.target.value)} />
             </label>
           </div>
@@ -144,8 +144,8 @@ function ScanPage() {
           </div>
 
           <div className="cta-row" style={{marginTop: "1rem"}}>
-            <button type="submit" className="button primary" disabled={status === "running"}>Begin Scan</button>
-            <button type="button" className="button secondary" onClick={handleDemo} disabled={status === "running"}>Replay Cached Demo</button>
+            <button type="submit" className="button primary" disabled={status === "running"}>Scan My Business</button>
+            <button type="button" className="button secondary" onClick={handleDemo} disabled={status === "running"}>View Example Business</button>
           </div>
         </form>
 
@@ -157,11 +157,11 @@ function ScanPage() {
             
             <div className="scan-metrics">
               <div className="status-tile">
-                <span>Assets Discovered</span>
+                <span>Computers found</span>
                 <strong>{metrics.assets}</strong>
               </div>
               <div className="status-tile">
-                <span>CVEs Found</span>
+                <span>Weaknesses found</span>
                 <strong>{metrics.cves}</strong>
               </div>
               <div className="status-tile">
