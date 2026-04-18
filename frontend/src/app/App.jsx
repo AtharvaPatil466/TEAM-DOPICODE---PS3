@@ -6,6 +6,8 @@ import ReportPage from "../pages/ReportPage";
 import ScanPage from "../pages/ScanPage";
 import SurfaceMapPage from "../pages/SurfaceMapPage";
 import ImpactPage from "../pages/ImpactPage";
+import SimulatePage from "../pages/SimulatePage";
+import DiffPage from "../pages/DiffPage";
 
 function App() {
   return (
@@ -16,6 +18,8 @@ function App() {
         <Route path="/surface-map" element={<SurfaceMapPage />} />
         <Route path="/kill-chain" element={<KillChainPage />} />
         <Route path="/impact" element={<ImpactPage />} />
+        <Route path="/simulate" element={<SimulatePage />} />
+        <Route path="/diff" element={<DiffPage />} />
         <Route path="/report" element={<ReportPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
@@ -24,3 +28,4 @@ function App() {
 }
 
 export default App;
+

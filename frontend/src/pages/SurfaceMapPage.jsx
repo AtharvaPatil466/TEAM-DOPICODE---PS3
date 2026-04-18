@@ -25,7 +25,7 @@ function SurfaceMapPage() {
           </p>
         </div>
       </section>
-      <SurfaceGraph graph={data.graph} details={data.nodeDetails} />
+      <SurfaceGraph graph={data.graph} details={data.nodeDetails} assetsById={data.assetsById || {}} />
     </section>
   );
 }

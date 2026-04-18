@@ -153,13 +153,16 @@ function buildFindingRows(assets) {
     .sort((left, right) => (right.risk_score || 0) - (left.risk_score || 0))
     .map((asset, index) => {
       const exposure = summarizeExposure(asset);
+      const strongest = topCve(asset);
       return {
         id: `F-${String(101 + index)}`,
         asset: assetLabel(asset),
         kind: exposure.kind,
         severity: riskSeverity(asset.risk_score),
         reason: exposure.reason,
-        action: exposure.action
+        action: exposure.action,
+        in_kev: strongest?.in_kev || false,
+        kev_ransomware: strongest?.kev_ransomware || false,
       };
     });
 }
@@ -552,18 +555,53 @@ export async function fetchImpactScenarios() {
 }
 
 export function connectLiveScan({ onOpen, onEvent, onClose, onError }) {
-  const socket = new WebSocket(`${WS_BASE}/scan/live`);
-  socket.addEventListener("open", () => onOpen?.(socket));
-  socket.addEventListener("message", (event) => {
-    try {
-      onEvent?.(JSON.parse(event.data));
-    } catch (error) {
-      onError?.(error);
+  const MAX_RETRIES = 5;
+  let retryCount = 0;
+  let socket = null;
+  let closed = false;
+
+  function connect() {
+    socket = new WebSocket(`${WS_BASE}/scan/live`);
+    socket.addEventListener("open", () => {
+      retryCount = 0;
+      onOpen?.(socket);
+    });
+    socket.addEventListener("message", (event) => {
+      try {
+        onEvent?.(JSON.parse(event.data));
+      } catch (error) {
+        onError?.(error);
+      }
+    });
+    socket.addEventListener("close", () => {
+      if (closed) {
+        onClose?.();
+        return;
+      }
+      if (retryCount < MAX_RETRIES) {
+        const delay = Math.min(1000 * Math.pow(2, retryCount), 16000);
+        retryCount++;
+        console.log(`WebSocket reconnecting in ${delay}ms (attempt ${retryCount}/${MAX_RETRIES})`);
+        setTimeout(connect, delay);
+      } else {
+        onClose?.();
+      }
+    });
+    socket.addEventListener("error", (event) => onError?.(event));
+  }
+
+  connect();
+
+  // Return a proxy with a close() that prevents reconnection
+  return {
+    close() {
+      closed = true;
+      socket?.close();
+    },
+    get readyState() {
+      return socket?.readyState;
     }
-  });
-  socket.addEventListener("close", () => onClose?.());
-  socket.addEventListener("error", (event) => onError?.(event));
-  return socket;
+  };
 }
 
 export async function replayLatestDemo() {
@@ -626,6 +664,7 @@ export async function fetchDashboardData() {
       findingRows,
       graph: graphModel,
       nodeDetails: buildNodeDetails(graphModel, assetsById, latestScan),
+      assetsById,
       killChainSteps,
       reportSections,
       impactData,
@@ -636,3 +675,32 @@ export async function fetchDashboardData() {
     return buildEmptyDashboard("The frontend could not reach the backend demo API. Start the API and seed a cached scan.");
   }
 }
+
+export async function fetchSimulate({ patchedAssetIds = [], patchedCveIds = [], persona = null }) {
+  return fetchJson("/attack-path/simulate", {
+    method: "POST",
+    body: JSON.stringify({
+      patched_asset_ids: patchedAssetIds,
+      patched_cve_ids: patchedCveIds,
+      persona,
+    }),
+  });
+}
+
+export async function fetchCompliance() {
+  try {
+    return await fetchJson("/compliance");
+  } catch (error) {
+    if (error.status === 404) return null;
+    throw error;
+  }
+}
+
+export async function fetchScanDiff(beforeId, afterId) {
+  return fetchJson(`/scan/diff?before=${beforeId}&after=${afterId}`);
+}
+
+export async function fetchRulebook() {
+  return fetchJson("/rulebook");
+}
+

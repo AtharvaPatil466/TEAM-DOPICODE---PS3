@@ -6,6 +6,8 @@ const links = [
   { to: "/surface-map", label: "Surface Map" },
   { to: "/kill-chain", label: "Kill Chain" },
   { to: "/impact", label: "Breach Impact" },
+  { to: "/simulate", label: "What-If" },
+  { to: "/diff", label: "Scan Diff" },
   { to: "/report", label: "Report" }
 ];
 

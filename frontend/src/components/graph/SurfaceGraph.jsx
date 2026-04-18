@@ -4,8 +4,26 @@ import { generateNarrative, buildRuleExplanationPrompt } from "../../services/ll
 
 const VIEWBOX = { width: 720, height: 470 };
 
-function SurfaceGraph({ graph, details }) {
+function riskToColor(score) {
+  // Continuous gradient: green (0) → yellow (50) → red (100)
+  const s = Math.min(Math.max(score || 0, 0), 100);
+  if (s <= 50) {
+    const t = s / 50;
+    const r = Math.round(78 + t * (255 - 78));
+    const g = Math.round(196 - t * (196 - 209));
+    const b = Math.round(212 - t * (212 - 102));
+    return `rgb(${r},${g},${b})`;
+  }
+  const t = (s - 50) / 50;
+  const r = 255;
+  const g = Math.round(209 - t * 209);
+  const b = Math.round(102 - t * 102);
+  return `rgb(${r},${g},${b})`;
+}
+
+function SurfaceGraph({ graph, details, assetsById }) {
   const [selectedNodeId, setSelectedNodeId] = useState(graph.nodes[0]?.id ?? null);
+  const [heatmapMode, setHeatmapMode] = useState(false);
   const [positions, setPositions] = useState(graph.nodes);
   const [draggingNodeId, setDraggingNodeId] = useState(null);
   const [selectedEdge, setSelectedEdge] = useState(null);
@@ -124,6 +142,14 @@ function SurfaceGraph({ graph, details }) {
             <h2>Public attack surface</h2>
           </div>
           <span className="chip">Click a node for context</span>
+          <button
+            type="button"
+            className={`chip ${heatmapMode ? "chip-live" : ""}`}
+            onClick={() => setHeatmapMode((m) => !m)}
+            style={{ cursor: "pointer" }}
+          >
+            {heatmapMode ? "◉ Heatmap ON" : "○ Heatmap"}
+          </button>
         </div>
 
         <svg
@@ -187,7 +213,9 @@ function SurfaceGraph({ graph, details }) {
                 cx={node.x}
                 cy={node.y}
                 r={selectedNodeId === node.id ? 38 : 30}
-                fill={severityColors[node.severity] || severityColors.Neutral}
+                fill={heatmapMode
+                  ? riskToColor(assetsById?.[node.id]?.risk_score || 0)
+                  : (severityColors[node.severity] || severityColors.Neutral)}
                 opacity={selectedNodeId === node.id ? 1 : 0.88}
               />
               <text x={node.x} y={node.y + 4} textAnchor="middle">
