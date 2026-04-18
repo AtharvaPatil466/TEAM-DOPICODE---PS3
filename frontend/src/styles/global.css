@@ -713,6 +713,38 @@ select {
   letter-spacing: -0.01em;
 }
 
+.rupee-big {
+  font-size: 3rem;
+  font-weight: 700;
+  color: #ff5d5d;
+  line-height: 1.1;
+  background: linear-gradient(135deg, #ff5d5d, #ff8c42);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin: 0.5rem 0;
+}
+
+.impact-grid {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.scenario-card {
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.scenario-card:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.advisory-panel .section-copy p {
+  color: var(--text);
+  margin-top: 0.5rem;
+  font-size: 1.05rem;
+  line-height: 1.6;
+}
+
 @media (max-width: 1400px) {
   .shell {
     grid-template-columns: 240px minmax(0, 1fr);

@@ -5,6 +5,7 @@ const links = [
   { to: "/overview", label: "Overview" },
   { to: "/surface-map", label: "Surface Map" },
   { to: "/kill-chain", label: "Kill Chain" },
+  { to: "/impact", label: "Breach Impact" },
   { to: "/report", label: "Report" }
 ];
 
@@ -52,7 +53,7 @@ function AppLayout() {
           <p className="eyebrow">Mission flow</p>
           <p>Phase 1: public exposure discovery</p>
           <p>Phase 2: internal impact modeling</p>
-          <p>Phase 3: remediation briefing</p>
+          <p>Phase 3: financial risk matrix</p>
         </div>
       </aside>
 

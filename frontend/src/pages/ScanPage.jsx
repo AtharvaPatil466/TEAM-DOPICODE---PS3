@@ -1,134 +1,175 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { startScan, replayLatestDemo, connectLiveScan } from "../services/api";
 import { useNavigate } from "react-router-dom";
 
-const scanHighlights = [
-  { label: "Coverage", value: "DNS, ports, storage, panels" },
-  { label: "Output", value: "Risk-ranked executive digest" },
-  { label: "Time to insight", value: "Under 2 minutes in demo mode" }
-];
-
-const scanModes = [
-  { title: "Fast sweep", detail: "Enumerate public assets and spotlight the loudest exposures first." },
-  { title: "Attack-path view", detail: "Translate exposed internet assets into likely internal business impact." }
-];
-
 function ScanPage() {
-  const [target, setTarget] = useState("shadowtrace-demo.xyz");
-  const [isScanning, setIsScanning] = useState(false);
+  const [domain, setDomain] = useState("shadowtrace-demo.xyz");
+  const [subnet, setSubnet] = useState("172.28.0.0/24");
+  const [companySize, setCompanySize] = useState("medium");
+  const [industrySector, setIndustrySector] = useState("technology");
+  const [processesPii, setProcessesPii] = useState(true);
+  
+  const [status, setStatus] = useState("idle");
+  const [events, setEvents] = useState([]);
+  const [progress, setProgress] = useState(0);
+  const [metrics, setMetrics] = useState({ assets: 0, cves: 0, portals: 0 });
   const navigate = useNavigate();
 
-  const handleScan = (e) => {
+  useEffect(() => {
+    if (status !== "running") return;
+    
+    const socket = connectLiveScan({
+      onOpen: () => console.log("Live scan connected"),
+      onEvent: (event) => {
+        if (event.type === "progress") {
+          setProgress(event.payload.percent);
+        } else if (event.type === "host_discovered") {
+          setMetrics(m => ({ ...m, assets: m.assets + 1 }));
+          setEvents(e => [`[${new Date(event.timestamp).toLocaleTimeString()}] Host discovered: ${event.payload.hostname || event.payload.ip}`, ...e]);
+        } else if (event.type === "cve_found") {
+          setMetrics(m => ({ ...m, cves: m.cves + 1 }));
+        } else if (event.type === "scan_completed") {
+          setStatus("completed");
+        } else if (event.type === "impact_computed") {
+          setEvents(e => [`[${new Date(event.timestamp).toLocaleTimeString()}] Impact computed: ${event.payload.top_scenario}`, ...e]);
+        }
+      },
+      onClose: () => {
+        if (status === "running") setStatus("idle");
+      },
+      onError: (err) => console.error("WS Error:", err)
+    });
+
+    return () => socket.close();
+  }, [status]);
+
+  const handleStart = async (e) => {
     e.preventDefault();
-    setIsScanning(true);
-    // Simulate a scan delay then redirect
-    setTimeout(() => {
-      setIsScanning(false);
-      navigate("/overview");
-    }, 1500);
+    setEvents([]);
+    setProgress(0);
+    setMetrics({ assets: 0, cves: 0, portals: 0 });
+    setStatus("running");
+    
+    try {
+      await startScan({ domain, subnet, companySize, industrySector, processesPii });
+    } catch (error) {
+      console.error(error);
+      setStatus("failed");
+    }
+  };
+
+  const handleDemo = async () => {
+    setEvents([]);
+    setProgress(0);
+    setMetrics({ assets: 0, cves: 0, portals: 0 });
+    setStatus("running");
+    
+    try {
+      await replayLatestDemo();
+    } catch (error) {
+      console.error(error);
+      setStatus("failed");
+    }
   };
 
   return (
     <section className="page scan-page">
-      <section className="hero-card hero-grid scan-hero">
-        <div className="hero-copy">
-          <p className="eyebrow">Launch scan</p>
-          <h2>DEFINE THE TRACE VECTOR.</h2>
-          <p>
-            Atlas maps exposed internet assets, spots the dangerous footholds, and reframes raw
-            scan noise into a remediation sequence that feels decisive.
-          </p>
-
-          <div className="hero-stat-row">
-            {scanHighlights.map((item) => (
-              <article key={item.label} className="hero-stat">
-                <span>{item.label}</span>
-                <strong>{item.value}</strong>
-              </article>
-            ))}
-          </div>
-        </div>
-
-        <div className="hero-side">
-          <div className="scan-stack">
-            {scanModes.map((mode) => (
-              <article key={mode.title} className="scan-mode-card">
-                <p className="eyebrow">Mode</p>
-                <h3>{mode.title}</h3>
-                <p>{mode.detail}</p>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <div className="scan-grid">
-        <section className="panel scan-panel">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">Target configuration</p>
-              <h2>Initiate external mapping</h2>
-            </div>
-            <span className="chip chip-live">Demo-ready</span>
-          </div>
-
-          <form onSubmit={handleScan} className="scan-form">
+      <div className="panel">
+        <p className="eyebrow">Initialize</p>
+        <h2>Configure Scan & Impact Profile</h2>
+        <p className="section-copy">Define the technical scope and the business profile for financial modeling.</p>
+        
+        <form className="scan-form" onSubmit={handleStart}>
+          <div className="toggle-row">
             <label>
-              Primary domain
-              <input
-                type="text"
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
-                placeholder="example.com"
-              />
+              Root Domain
+              <input value={domain} onChange={e => setDomain(e.target.value)} required />
+              <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginTop: "0.25rem" }}>
+                <span className="section-copy" style={{ fontSize: "0.8rem", alignSelf: "center" }}>Suggested:</span>
+                <span style={{cursor: "pointer", fontSize: "0.8rem", color: "var(--accent)"}} onClick={() => setDomain("shadowtrace-demo.xyz")}>shadowtrace-demo.xyz</span>
+                <span style={{cursor: "pointer", fontSize: "0.8rem", color: "var(--accent)"}} onClick={() => setDomain("hooli.com")}>hooli.com</span>
+                <span style={{cursor: "pointer", fontSize: "0.8rem", color: "var(--accent)"}} onClick={() => setDomain("example.com")}>example.com</span>
+              </div>
             </label>
-
-            <div className="toggle-row">
-              <article className="toggle-card">
-                <div className="toggle-icon">01</div>
-                <div>
-                  <strong>External footprint</strong>
-                  <p>Subdomains, exposed services, storage, and admin surfaces.</p>
-                </div>
-              </article>
-
-              <article className="toggle-card">
-                <div className="toggle-icon">02</div>
-                <div>
-                  <strong>Impact projection</strong>
-                  <p>Generate a plausible path from exposure to business-side blast radius.</p>
-                </div>
-              </article>
-            </div>
-
-            <div className="cta-row">
-              <button type="submit" className="button primary" disabled={isScanning}>
-                {isScanning ? "Scanning target..." : "Start scan"}
-              </button>
-              <button type="button" className="button secondary" onClick={() => navigate("/overview")}>
-                View seeded dashboard
-              </button>
-            </div>
-          </form>
-        </section>
-
-        <aside className="panel scan-brief">
-          <p className="eyebrow">What you’ll get</p>
-          <h2>Outputs built for speed and clarity</h2>
-          <div className="brief-list">
-            <article className="brief-item">
-              <strong>Surface map</strong>
-              <p>Visualize exposed assets and the paths linking internet presence to crown-jewel systems.</p>
-            </article>
-            <article className="brief-item">
-              <strong>Prioritized findings</strong>
-              <p>Rank issues by practical risk, not just raw technical severity labels.</p>
-            </article>
-            <article className="brief-item">
-              <strong>CTO-ready report</strong>
-              <p>Package the narrative into an exportable summary with recommended first moves.</p>
-            </article>
+            <label>
+              Internal Subnet (Optional)
+              <input value={subnet} onChange={e => setSubnet(e.target.value)} />
+            </label>
           </div>
-        </aside>
+          
+          <div className="toggle-row">
+            <label>
+              Company Size
+              <select value={companySize} onChange={e => setCompanySize(e.target.value)}>
+                <option value="small">Small ({"<"}50 emp)</option>
+                <option value="medium">Medium (50-500 emp)</option>
+                <option value="large">Large (500+ emp)</option>
+              </select>
+            </label>
+            <label>
+              Industry Sector
+              <select value={industrySector} onChange={e => setIndustrySector(e.target.value)}>
+                <option value="technology">Technology</option>
+                <option value="financial_services">Financial Services</option>
+                <option value="healthcare">Healthcare</option>
+                <option value="retail">Retail</option>
+                <option value="manufacturing">Manufacturing</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+          </div>
+          
+          <div className="toggle-row">
+            <label className="toggle-card" style={{flexDirection: "row"}}>
+              <input type="checkbox" checked={processesPii} onChange={e => setProcessesPii(e.target.checked)} style={{width: "auto"}} />
+              <div>
+                <strong>Processes PII</strong>
+                <p className="section-copy" style={{margin: 0, fontSize: "0.85rem"}}>Subject to DPDP Act baseline</p>
+              </div>
+            </label>
+          </div>
+
+          <div className="cta-row" style={{marginTop: "1rem"}}>
+            <button type="submit" className="button primary" disabled={status === "running"}>Begin Scan</button>
+            <button type="button" className="button secondary" onClick={handleDemo} disabled={status === "running"}>Replay Cached Demo</button>
+          </div>
+        </form>
+
+        {(status === "running" || status === "completed") && (
+          <div style={{marginTop: "2rem"}}>
+            <div className="progress-shell">
+              <div className="progress-bar" style={{width: `${progress}%`}} />
+            </div>
+            
+            <div className="scan-metrics">
+              <div className="status-tile">
+                <span>Assets Discovered</span>
+                <strong>{metrics.assets}</strong>
+              </div>
+              <div className="status-tile">
+                <span>CVEs Found</span>
+                <strong>{metrics.cves}</strong>
+              </div>
+              <div className="status-tile">
+                <span>Status</span>
+                <strong>{status === "running" ? `${progress}%` : "Complete"}</strong>
+              </div>
+            </div>
+            
+            <div className="event-panel">
+              <p className="eyebrow" style={{marginBottom: "1rem"}}>Event Stream</p>
+              <div className="event-list" style={{maxHeight: "200px", overflowY: "auto"}}>
+                {events.map((ev, i) => <p key={i} style={{fontSize: "0.9rem"}}>{ev}</p>)}
+              </div>
+            </div>
+            
+            {status === "completed" && (
+              <div className="cta-row" style={{marginTop: "1.5rem"}}>
+                <button type="button" className="button primary" onClick={() => navigate("/overview")}>View Results</button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </section>
   );

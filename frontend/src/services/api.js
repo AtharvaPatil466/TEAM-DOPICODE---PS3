@@ -338,29 +338,41 @@ function buildKillChainSteps(attackPath, assetsById, latestScan) {
   return steps.slice(0, 4);
 }
 
-function buildReportSections(latestScan, findingRows, attackPath) {
+function buildReportSections(latestScan, findingRows, attackPath, impactData) {
   const criticalCount = findingRows.filter((row) => row.severity === "Critical").length;
   const lead = findingRows[0];
-  return [
+  const sections = [
     {
       heading: "Executive summary",
       body: `${latestScan.domain} is running as a cached ${latestScan.internal_scope ? "external plus internal" : "external-only"} demo with ${latestScan.total_assets} assets and ${criticalCount} critical findings.`
-    },
-    {
+    }
+  ];
+  
+  if (impactData && impactData.executive_advisory) {
+    sections.push({
+      heading: "Financial Risk Advisory",
+      body: impactData.executive_advisory
+    });
+  }
+
+  sections.push({
       heading: "Critical exposures",
       body: lead
         ? `${lead.asset} is the highest-priority issue because ${lead.reason.toLowerCase()}`
         : "No prioritized findings are cached yet."
-    },
-    {
+  });
+  
+  sections.push({
       heading: "Modeled attack path",
       body: attackPath.narrative || "No attack path narrative has been computed for the current cached scan."
-    },
-    {
+  });
+  
+  sections.push({
       heading: "Recommended next steps",
       body: findingRows.slice(0, 3).map((row) => row.action).join(" ")
-    }
-  ];
+  });
+  
+  return sections;
 }
 
 function buildNarrative(latestScan, attackPath, findingRows) {
@@ -435,6 +447,37 @@ export async function fetchLatestScan() {
   }
 }
 
+export async function startScan({ domain, subnet, companySize, industrySector, processesPii }) {
+  return fetchJson("/scan/start", {
+    method: "POST",
+    body: JSON.stringify({
+      domain,
+      subnet,
+      company_size: companySize,
+      industry_sector: industrySector,
+      processes_pii: processesPii === undefined ? true : processesPii
+    })
+  });
+}
+
+export async function fetchImpact() {
+  try {
+    return await fetchJson("/impact");
+  } catch (error) {
+    if (error.status === 404) return null;
+    throw error;
+  }
+}
+
+export async function fetchImpactScenarios() {
+  try {
+    return await fetchJson("/impact/scenarios");
+  } catch (error) {
+    if (error.status === 404) return null;
+    throw error;
+  }
+}
+
 export function connectLiveScan({ onOpen, onEvent, onClose, onError }) {
   const socket = new WebSocket(`${WS_BASE}/scan/live`);
   socket.addEventListener("open", () => onOpen?.(socket));
@@ -465,10 +508,12 @@ export async function fetchDashboardData() {
       return buildEmptyDashboard("No cached demo scan found. Run `python -m backend.scripts.seed_demo` first.");
     }
 
-    const [assetSummaries, graph, attackPath] = await Promise.all([
+    const [assetSummaries, graph, attackPath, impactData, impactScenarios] = await Promise.all([
       fetchJson("/assets"),
       fetchJson("/graph"),
-      fetchJson("/attack-path")
+      fetchJson("/attack-path"),
+      fetchImpact(),
+      fetchImpactScenarios()
     ]);
     const assets = await Promise.all(assetSummaries.map((asset) => fetchJson(`/asset/${asset.id}`)));
     const assetsById = Object.fromEntries(assets.map((asset) => [asset.id, asset]));
@@ -493,6 +538,7 @@ export async function fetchDashboardData() {
           value: String(storageFindings),
           tone: storageFindings ? "warning" : "neutral"
         },
+        { label: "Breach Exposure", value: impactData ? impactData.total_formatted.split(" - ")[1] : "Calculating...", tone: "critical" },
         { label: "Executive risk", value: `${(maxRisk / 10).toFixed(1)} / 10`, tone: "critical" }
       ],
       narrative: buildNarrative(latestScan, attackPath, findingRows),
@@ -501,7 +547,9 @@ export async function fetchDashboardData() {
       graph: graphModel,
       nodeDetails: buildNodeDetails(graphModel, assetsById, latestScan),
       killChainSteps: buildKillChainSteps(attackPath, assetsById, latestScan),
-      reportSections: buildReportSections(latestScan, findingRows, attackPath)
+      reportSections: buildReportSections(latestScan, findingRows, attackPath, impactData),
+      impactData,
+      impactScenarios
     };
   } catch (error) {
     console.error(error);
