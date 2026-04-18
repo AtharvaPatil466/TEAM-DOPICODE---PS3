@@ -360,7 +360,7 @@ function buildKillChainSteps(attackPath, assetsById, latestScan) {
       ruleId: hop.rule_id,
       technique: hop.attack_techniques?.[0],
       cveId: hop.cve_id,
-      hasLlmRationale: !!llmRationale,
+      hasLlmRationale: false,
       probeSuccess: probe?.success ?? null,
       probePort: probe?.port ?? null,
       probeLatencyMs: probe?.latency_ms ?? null,
