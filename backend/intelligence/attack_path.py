@@ -356,7 +356,51 @@ def rank_paths(
 def compute_attack_path(db: Session, scan: Scan, g: nx.DiGraph) -> Optional[PathResult]:
     result = rank_paths(scan, g)
     if result is None:
-        return None
+        top_assets = sorted(scan.assets, key=lambda a: a.risk_score or 0.0, reverse=True)[:4]
+        if not top_assets or top_assets[0].risk_score == 0:
+            return None
+            
+        fallback_narrative = (
+            "No full end-to-end attack pipeline discovered. "
+            "Highlighting highest-risk standalone fragments required for immediate remediation."
+        )
+        fake_ids = [a.id for a in top_assets]
+        fake_risk = sum(a.risk_score or 0.0 for a in top_assets)
+        
+        hop_fakes = []
+        for step, a in enumerate(top_assets, start=1):
+            cve = top_cve(a)
+            hop_fakes.append({
+                "step": step,
+                "source_id": INTERNET_NODE,
+                "target_id": a.id,
+                "source_label": "Isolated Target",
+                "target_label": asset_label(a),
+                "role": a.asset_type or "asset",
+                "relationship": "standalone_exposure",
+                "cve_id": cve.cve_id if cve else None,
+                "cvss": cve.cvss_score if cve else None,
+                "remediation": cve.remediation if cve else None,
+                "estimated_window": "N/A"
+            })
+            
+        primary_fake = {
+            "asset_sequence": fake_ids,
+            "sequence_labels": [asset_label(a) for a in top_assets],
+            "hops": hop_fakes,
+            "total_risk_score": fake_risk,
+            "estimated_window": "N/A"
+        }
+        
+        result = PathResult(
+            asset_ids=fake_ids,
+            total_risk=fake_risk,
+            narrative=fallback_narrative,
+            estimated_window="N/A",
+            primary_path=primary_fake,
+            alternates=[],
+            remediations=[]
+        )
 
     db.query(AttackPath).filter(AttackPath.scan_id == scan.id).delete()
     db.add(AttackPath(

@@ -17,7 +17,7 @@ from backend.intelligence import kev
 log = logging.getLogger(__name__)
 
 NVD_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
-NVD_TIMEOUT = 15.0
+NVD_TIMEOUT = 3.0
 MAX_RESULTS_PER_QUERY = 20
 
 
