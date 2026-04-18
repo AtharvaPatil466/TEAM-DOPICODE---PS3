@@ -22,9 +22,9 @@ function riskToColor(score) {
 }
 
 function SurfaceGraph({ graph, details, assetsById }) {
-  const [selectedNodeId, setSelectedNodeId] = useState(graph.nodes[0]?.id ?? null);
+  const [selectedNodeId, setSelectedNodeId] = useState(graph?.nodes?.[0]?.id ?? null);
   const [heatmapMode, setHeatmapMode] = useState(false);
-  const [positions, setPositions] = useState(graph.nodes);
+  const [positions, setPositions] = useState(graph?.nodes || []);
   const [draggingNodeId, setDraggingNodeId] = useState(null);
   const [selectedEdge, setSelectedEdge] = useState(null);
   const [edgeExplanation, setEdgeExplanation] = useState(null);
@@ -55,9 +55,10 @@ function SurfaceGraph({ graph, details, assetsById }) {
   };
 
   useEffect(() => {
-    setPositions(graph.nodes);
-    setSelectedNodeId((current) => current ?? graph.nodes[0]?.id ?? null);
-  }, [graph.nodes]);
+    const nodes = graph?.nodes || [];
+    setPositions(nodes);
+    setSelectedNodeId((current) => current ?? nodes[0]?.id ?? null);
+  }, [graph?.nodes]);
 
   const selected = selectedNodeId == null ? null : details[selectedNodeId];
 

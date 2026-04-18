@@ -448,7 +448,26 @@ def impact(db: Session = Depends(get_db)) -> schemas.ImpactResponse:
     
     report = db.query(ImpactReport).filter(ImpactReport.scan_id == scan.id).order_by(desc(ImpactReport.id)).first()
     if not report:
-        raise HTTPException(404, "no impact report available for latest scan")
+        # Avoid 404ing the frontend during the bootstrap phase. Return structural defaults.
+        return schemas.ImpactResponse(
+            scan_id=scan.id,
+            company_size=scan.company_size or "small",
+            industry_sector=scan.industry_sector or "technology",
+            asset_classifications={},
+            regulatory_exposure=schemas.RegulatoryExposure(
+                min_inr=0, max_inr=0, min_formatted="₹0", max_formatted="₹0",
+                applicable_law="DPDP Act 2023", penalty_tier="Unknown", breakdown={}
+            ),
+            operational_loss=schemas.OperationalLoss(
+                downtime={"min_inr": 0, "max_inr": 0, "mttr_hours_low": 0, "mttr_hours_high": 0},
+                incident_response={"min_inr": 0, "max_inr": 0},
+                customer_churn={"min_inr": 0, "max_inr": 0},
+                total_min_inr=0, total_max_inr=0
+            ),
+            total_exposure_min_inr=0, total_exposure_max_inr=0,
+            total_formatted="Calculating...",
+            executive_advisory="Analyzing attack surface for business impact..."
+        )
         
     return schemas.ImpactResponse(
         scan_id=scan.id,
@@ -516,7 +535,7 @@ def impact_scenarios(db: Session = Depends(get_db)) -> schemas.ScenarioMatrixRes
 
     report = db.query(ImpactReport).filter(ImpactReport.scan_id == scan.id).order_by(desc(ImpactReport.id)).first()
     if not report:
-        raise HTTPException(404, "no impact report available for latest scan")
+        return schemas.ScenarioMatrixResponse(scan_id=scan.id, total_paths=0, total_scenarios=0, scenarios=[])
 
     scenarios = [_normalize_scenario(s) for s in (report.scenario_matrix or [])]
     total_paths = sum(s.get("path_count", 0) for s in scenarios)

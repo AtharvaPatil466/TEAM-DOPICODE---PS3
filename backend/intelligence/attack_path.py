@@ -198,7 +198,13 @@ def build_candidate_paths(
             break
 
     candidates: list[dict] = []
-    for index, path in enumerate(kept_paths, start=1):
+    import hashlib
+    for path in kept_paths:
+        # Create a deterministic ID based on the node sequence so simulation 
+        # deltas (path comparisons) work even when some paths are removed.
+        path_hash = hashlib.md5("-".join(map(str, path)).encode()).hexdigest()[:8].upper()
+        path_id = f"PATH-{path_hash}"
+
         hops: list[dict] = []
         total_weight = 0.0
         total_low = 0
@@ -239,7 +245,7 @@ def build_candidate_paths(
             })
 
         candidates.append({
-            "path_id": f"PATH-{index:02d}",
+            "path_id": path_id,
             "asset_sequence": path,
             "sequence_labels": [
                 "Internet" if asset_id == INTERNET_NODE else asset_label(assets_by_id[asset_id])
