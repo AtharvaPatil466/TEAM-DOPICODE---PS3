@@ -1,4 +1,4 @@
-.PHONY: help install lab-up lab-down run seed reset demo clean
+.PHONY: help install lab-up lab-down run seed reset demo clean stack-up stack-down stack-build
 
 PY ?= python3.12
 VENV := backend/.venv
@@ -16,6 +16,9 @@ help:
 	@echo "  make reset       Wipe shadowtrace.db"
 	@echo "  make demo        reset + seed + run (offline demo mode)"
 	@echo "  make clean       Remove venv + pycache"
+	@echo "  make stack-up    Build + start backend + frontend containers (lab must be up)"
+	@echo "  make stack-down  Stop backend + frontend"
+	@echo "  make stack-build Rebuild backend + frontend images"
 
 install:
 	@$(PY) -c "import sys; assert sys.version_info[:2] == (3, 12), 'Expected Python 3.12.x'"
@@ -42,3 +45,12 @@ demo: reset seed run
 
 clean:
 	rm -rf $(VENV) backend/**/__pycache__ backend/__pycache__
+
+stack-up:
+	cd infra && docker compose up -d --build
+
+stack-down:
+	cd infra && docker compose down
+
+stack-build:
+	cd infra && docker compose build

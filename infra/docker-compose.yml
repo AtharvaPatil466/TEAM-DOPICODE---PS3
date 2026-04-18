@@ -1,0 +1,47 @@
+# Top-level compose: brings up backend + frontend alongside the existing lab.
+# Start the lab first (`cd lab && docker compose up -d`) so the shadowlab
+# network exists — this file attaches the backend to it so scans reach
+# 172.28.0.0/24 without relying on host bridge routing.
+#
+#   cd infra && docker compose up --build
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: infra/backend.Dockerfile
+    image: shadowtrace-backend:latest
+    container_name: shadowtrace-backend
+    environment:
+      LAB_SUBNET: 172.28.0.0/24
+      LAB_ENTRY_HOST: 172.28.0.10
+      LAB_CROWN_JEWEL: 172.28.0.20
+      LOG_LEVEL: INFO
+    volumes:
+      - shadowtrace-data:/app/data
+    networks:
+      - default
+      - shadowlab
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: infra/frontend.Dockerfile
+    image: shadowtrace-frontend:latest
+    container_name: shadowtrace-frontend
+    depends_on:
+      - backend
+    ports:
+      # Host 8080 is used by the lab's apache-legacy container; use 8090.
+      - "8090:80"
+
+volumes:
+  shadowtrace-data:
+
+networks:
+  default:
+  shadowlab:
+    external: true
+    name: lab_shadowlab

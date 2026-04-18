@@ -17,3 +17,4 @@ dnspython==2.7.0
 cryptography==43.0.1
 websockets==13.1
 aiosqlite==0.20.0
+pytest==8.3.3

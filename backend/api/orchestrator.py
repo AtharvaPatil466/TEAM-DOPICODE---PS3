@@ -6,7 +6,7 @@ from ipaddress import ip_address, ip_network
 
 from sqlalchemy.orm import Session
 
-from backend.config import LAB_CROWN_JEWEL, LAB_ENTRY_HOST
+from backend.config import LAB_CROWN_JEWEL, LAB_ENTRY_HOST, SCAN_IGNORE_IPS
 from backend.db import SessionLocal
 from backend.db.models import Asset, CVE, Port, Scan
 from backend.api.events import bus
@@ -161,6 +161,24 @@ async def _external_phase(db: Session, scan: Scan) -> list[Asset]:
     return assets
 
 
+def _own_ips() -> set[str]:
+    """Best-effort detection of the scanner's own addresses so we don't treat
+    them as discovered targets. Works both on bare-metal and inside a container
+    on a shared docker network."""
+    import socket
+    ips: set[str] = set()
+    try:
+        ips.update(socket.gethostbyname_ex(socket.gethostname())[2])
+    except Exception:
+        pass
+    return ips
+
+
+def _filter_discovered_hosts(hosts: list[str]) -> list[str]:
+    ignore = SCAN_IGNORE_IPS | _own_ips()
+    return [h for h in hosts if h not in ignore]
+
+
 async def _internal_phase(db: Session, scan: Scan) -> list[Asset]:
     scan_id = scan.id
     subnet = scan.target_subnet
@@ -173,6 +191,7 @@ async def _internal_phase(db: Session, scan: Scan) -> list[Asset]:
     except Exception as e:
         log.warning("nmap discovery failed: %s", e)
         hosts = []
+    hosts = _filter_discovered_hosts(hosts)
     await bus.publish("progress", {"phase": "nmap_host_discovery", "found": len(hosts)}, scan_id)
 
     crown_ip = LAB_CROWN_JEWEL
