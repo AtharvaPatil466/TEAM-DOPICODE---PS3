@@ -63,6 +63,19 @@ function graphSeverity(level) {
   }
 }
 
+function graphRiskRank(level) {
+  switch ((level || "").toLowerCase()) {
+    case "critical":
+      return 3;
+    case "high":
+      return 2;
+    case "medium":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
 function shortType(type) {
   switch (type) {
     case "internet":
@@ -279,6 +292,89 @@ function buildGraphModel(graph, assetsById) {
       rationale: edge.rationale,
       ruleId: edge.rule_id
     }))
+  };
+}
+
+function buildSurfaceGraphModel(graph) {
+  const apiNodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+  const apiEdges = Array.isArray(graph?.edges) ? graph.edges : [];
+
+  const normalizedNodes = apiNodes.map((node) => ({
+    ...node,
+    id: Number(node.id),
+    severity: graphSeverity(node.risk_level),
+    type: shortType(node.asset_type),
+    label: node.label || typeLabel(node.asset_type)
+  }));
+
+  const internetNode = normalizedNodes.find(
+    (node) => node.id === 0 || node.asset_type === "internet"
+  );
+  const assetNodes = normalizedNodes.filter((node) => node.id !== internetNode?.id);
+
+  const sortByRisk = (left, right) => graphRiskRank(right.risk_level) - graphRiskRank(left.risk_level);
+  const externalNodes = assetNodes.filter((node) => node.asset_type !== "storage").sort(sortByRisk);
+  const storageNodes = assetNodes.filter((node) => node.asset_type === "storage").sort(sortByRisk);
+
+  const laidOutNodes = [];
+  if (internetNode) {
+    laidOutNodes.push({
+      ...internetNode,
+      x: 360,
+      y: 90
+    });
+  }
+
+  layoutRow(externalNodes, 235).forEach((node) => laidOutNodes.push(node));
+  layoutRow(storageNodes, 380).forEach((node) => laidOutNodes.push(node));
+
+  const details = Object.fromEntries(
+    laidOutNodes.map((node) => [
+      node.id,
+      {
+        title: node.label || typeLabel(node.asset_type),
+        summary:
+          node.asset_type === "internet"
+            ? "Entry node representing the public internet-facing attack surface."
+            : `${typeLabel(node.asset_type)} node with ${node.risk_level || "low"} risk in the current graph response.`,
+        bullets: [
+          `Asset type: ${typeLabel(node.asset_type)}`,
+          `Risk level: ${node.risk_level || "low"}`,
+          node.is_crown_jewel ? "Marked as crown jewel" : "Not marked as crown jewel"
+        ]
+      }
+    ])
+  );
+
+  const assetsById = Object.fromEntries(
+    normalizedNodes.map((node) => [
+      node.id,
+      {
+        id: node.id,
+        asset_type: node.asset_type,
+        risk_score: graphRiskRank(node.risk_level) * 33.3,
+        is_crown_jewel: Boolean(node.is_crown_jewel),
+        is_shadow_device: Boolean(node.is_shadow_device),
+        label: node.label
+      }
+    ])
+  );
+
+  return {
+    graph: {
+      nodes: laidOutNodes,
+      edges: apiEdges.map((edge) => ({
+        from: Number(edge.source),
+        to: Number(edge.target),
+        relationship: edge.relationship,
+        rationale: edge.rationale,
+        ruleId: edge.rule_id,
+        attackTechniques: edge.attack_techniques,
+        evidence: edge.evidence
+      }))
+    },
+    nodeDetails: details,
+    assetsById
   };
 }
 
@@ -620,6 +716,35 @@ export async function replayLatestDemo() {
 
 export function reportPdfUrl() {
   return `${API_BASE}/report/pdf`;
+}
+
+export async function fetchSurfaceGraphData() {
+  try {
+    const response = await fetch(`${API_BASE}/graph`, {
+      headers: {
+        "Content-Type": "application/json"
+      }
+    });
+
+    console.log("[SurfaceMap] /graph raw response", {
+      ok: response.ok,
+      status: response.status,
+      url: response.url
+    });
+
+    if (!response.ok) {
+      throw new Error(`Request failed for /graph with ${response.status}`);
+    }
+
+    const rawData = await response.json();
+    console.log("[SurfaceMap] /graph parsed JSON", rawData);
+
+    const { nodes = [], edges = [] } = rawData || {};
+    return buildSurfaceGraphModel({ nodes, edges });
+  } catch (error) {
+    console.error("[SurfaceMap] Failed to load graph", error);
+    throw error;
+  }
 }
 
 export async function fetchDashboardData() {

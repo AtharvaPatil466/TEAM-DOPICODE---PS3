@@ -1,0 +1,208 @@
+/* ============================================================
+   ShadowTrace — Mobile Responsive Overrides
+   Import this file AFTER brand.css and interactions.css
+   ============================================================ */
+
+
+/* ════════════════════════════════════════════════════════════
+   TABLET + PHONE — max-width: 768px
+   ════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+
+  /* ── LandingPage ─────────────────────────────────────────── */
+
+  /* Hero input + button stack vertically, full width */
+  .landing-hero-form {
+    flex-direction: column;
+    gap: 0;
+  }
+  .landing-hero-form input,
+  .landing-hero-form button {
+    width: 100%;
+    border-right: 1px solid var(--color-border, #1E3048);
+  }
+  .landing-hero-form input {
+    border-bottom: none;
+  }
+
+  /* h1 responsive clamp */
+  .landing-h1 {
+    font-size: clamp(1.75rem, 6vw, 3.5rem);
+  }
+
+  /* Trust signals stack */
+  .landing-trust {
+    grid-template-columns: 1fr;
+  }
+  .landing-trust-card {
+    border-right: none;
+    border-bottom: 1px solid var(--color-border, #1E3048);
+  }
+  .landing-trust-card:last-child {
+    border-bottom: none;
+  }
+
+  /* How-it-works steps stack */
+  .landing-steps {
+    grid-template-columns: 1fr;
+    gap: var(--space-4, 16px);
+  }
+  .landing-step-arrow {
+    transform: rotate(90deg);
+    font-size: var(--text-body, 0.875rem);
+  }
+
+  /* Count-up stat center */
+  .landing-stat {
+    text-align: center;
+    align-items: center;
+  }
+
+
+  /* ── ScanPage ────────────────────────────────────────────── */
+
+  /* Finding cards — badge stacks above content */
+  .scan-finding-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2, 8px);
+  }
+  .scan-finding-card .card-time {
+    align-self: flex-end;
+  }
+
+  /* Right telemetry panel hidden */
+  .scan-telemetry-panel {
+    display: none;
+  }
+
+  /* Path validation HUD — collapse to single line */
+  .validation-hud-detail {
+    display: none;
+  }
+  .validation-hud-summary {
+    display: inline;
+  }
+
+
+  /* ── Results Sticky Header ───────────────────────────────── */
+
+  .results-sticky-bar {
+    flex-wrap: wrap;
+  }
+  .results-sticky-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-4, 16px);
+    width: 100%;
+  }
+  .results-sticky-exposure .big-inr {
+    font-size: 36px;
+  }
+  .results-sticky-download {
+    width: 100%;
+  }
+  .results-sticky-download button {
+    width: 100%;
+  }
+
+
+  /* ── Attack Graph ────────────────────────────────────────── */
+
+  .graph-panel .surface-graph {
+    display: none;
+  }
+  .graph-panel .graph-mobile-fallback {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4, 16px);
+    padding: var(--space-5, 20px);
+  }
+  .graph-mobile-fallback .mobile-notice {
+    font-size: var(--text-body, 0.875rem);
+    color: var(--color-text-muted, #5C7A96);
+    text-align: center;
+    padding: var(--space-4, 16px);
+    border: 1px solid var(--color-border, #1E3048);
+    background: var(--color-bg-secondary, #111F30);
+  }
+  .graph-mobile-fallback .mobile-asset-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2, 8px);
+  }
+  .graph-mobile-fallback .mobile-asset-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-3, 12px) var(--space-4, 16px);
+    background: var(--color-bg-secondary, #111F30);
+    border: 1px solid var(--color-border, #1E3048);
+    font-size: var(--text-body, 0.875rem);
+  }
+
+  /* Detail panel hidden on mobile */
+  .detail-panel {
+    display: none;
+  }
+}
+
+
+/* ════════════════════════════════════════════════════════════
+   PHONE PORTRAIT — max-width: 375px
+   ════════════════════════════════════════════════════════════ */
+@media (max-width: 375px) {
+
+  /* ── LandingPage ─────────────────────────────────────────── */
+
+  .landing-h1 {
+    font-size: 1.5rem;
+  }
+  .landing-stat-number {
+    font-size: 2.5rem;
+  }
+
+  /* ── ScanPage ────────────────────────────────────────────── */
+
+  /* Counters: stay horizontal but compress */
+  .scan-counters {
+    gap: var(--space-3, 12px);
+  }
+  .scan-counters .counter-value {
+    font-size: var(--text-heading-sm, 1.125rem);
+  }
+  .scan-counters .counter-label {
+    font-size: 0.6rem;
+  }
+
+  /* Top bar title smaller */
+  .scan-top-title {
+    font-size: var(--text-body-lg, 1rem);
+    letter-spacing: 0.04em;
+  }
+
+  /* ── Results Sticky Header ───────────────────────────────── */
+
+  .results-sticky-stats {
+    grid-template-columns: 1fr;
+  }
+  .results-sticky-exposure .big-inr {
+    font-size: 28px;
+  }
+
+  /* ── Footer ──────────────────────────────────────────────── */
+
+  .landing-footer {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2, 8px);
+  }
+}
+
+
+/* ════════════════════════════════════════════════════════════
+   DESKTOP DEFAULT — graph mobile fallback hidden
+   ════════════════════════════════════════════════════════════ */
+.graph-mobile-fallback {
+  display: none;
+}
