@@ -36,6 +36,7 @@ class CVEOut(BaseModel):
     description: Optional[str] = None
     cvss: Optional[float] = None
     attack_vector: Optional[str] = None
+    attack_complexity: Optional[str] = None
     remediation: Optional[str] = None
 
 
@@ -76,11 +77,20 @@ class GraphEdgeOut(BaseModel):
     source: int
     target: int
     relationship: str
+    rule_id: Optional[str] = None
+    rationale: Optional[str] = None
+    weight: float = 1.0
 
 
 class GraphResponse(BaseModel):
     nodes: list[GraphNode]
     edges: list[GraphEdgeOut]
+
+
+class RulebookRuleOut(BaseModel):
+    id: str
+    name: str
+    description: str
 
 
 class AttackPathHop(BaseModel):

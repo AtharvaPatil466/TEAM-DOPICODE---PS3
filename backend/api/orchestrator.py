@@ -252,6 +252,7 @@ async def _attach_cves(db: Session, asset: Asset, product: str, version: str | N
             description=r.description,
             cvss_score=r.cvss_score,
             attack_vector=r.attack_vector,
+            attack_complexity=r.attack_complexity,
             remediation=r.remediation,
         ))
         await bus.publish("cve_found", {

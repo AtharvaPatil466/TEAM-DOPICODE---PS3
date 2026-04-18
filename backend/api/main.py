@@ -14,6 +14,7 @@ from backend.db.models import Scan, Asset, Port, CVE, GraphEdge, AttackPath
 from backend.api import schemas
 from backend.api.events import bus
 from backend.api.orchestrator import run_scan
+from backend.intelligence.edge_rules import rulebook as graph_rulebook
 
 logging.basicConfig(level=LOG_LEVEL)
 
@@ -130,7 +131,8 @@ def asset_detail(asset_id: int, db: Session = Depends(get_db)) -> schemas.AssetD
         ports=[schemas.PortOut(port=p.port_number, protocol=p.protocol, service=p.service_name,
                                version=p.service_version, state=p.state) for p in a.ports],
         cves=[schemas.CVEOut(cve_id=c.cve_id, description=c.description, cvss=c.cvss_score,
-                             attack_vector=c.attack_vector, remediation=c.remediation) for c in a.cves],
+                             attack_vector=c.attack_vector, attack_complexity=c.attack_complexity,
+                             remediation=c.remediation) for c in a.cves],
         graph_position=None,
     )
 
@@ -152,10 +154,22 @@ def graph(db: Session = Depends(get_db)) -> schemas.GraphResponse:
         for a in scan.assets
     ]
     edges = [
-        schemas.GraphEdgeOut(source=e.source_id, target=e.target_id, relationship=e.relationship_type)
+        schemas.GraphEdgeOut(
+            source=e.source_id,
+            target=e.target_id,
+            relationship=e.relationship_type,
+            rule_id=e.rule_id,
+            rationale=e.rationale,
+            weight=e.weight,
+        )
         for e in scan.edges
     ]
     return schemas.GraphResponse(nodes=nodes, edges=edges)
+
+
+@app.get("/rulebook", response_model=list[schemas.RulebookRuleOut])
+def rulebook() -> list[schemas.RulebookRuleOut]:
+    return [schemas.RulebookRuleOut(**rule) for rule in graph_rulebook()]
 
 
 @app.get("/attack-path", response_model=schemas.AttackPathResponse)
