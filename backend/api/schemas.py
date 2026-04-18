@@ -5,9 +5,16 @@ from pydantic import BaseModel, Field
 Persona = Literal["script_kiddie", "criminal", "apt"]
 
 
+CompanySize = Literal["small", "medium", "large"]
+IndustrySector = Literal["technology", "retail", "financial_services", "healthcare", "manufacturing", "other"]
+
+
 class ScanStartRequest(BaseModel):
     domain: str
     subnet: Optional[str] = None
+    company_size: Optional[CompanySize] = None
+    industry_sector: Optional[IndustrySector] = None
+    processes_pii: Optional[bool] = None
 
 
 class ScanStartResponse(BaseModel):
@@ -208,3 +215,65 @@ class LiveEvent(BaseModel):
     timestamp: datetime
     scan_id: Optional[int] = None
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AssetClassification(BaseModel):
+    asset_id: int
+    label: str
+    classification: str
+    data_sensitivity_tier: int
+
+
+class RegulatoryExposure(BaseModel):
+    min_inr: float
+    max_inr: float
+    min_formatted: str
+    max_formatted: str
+    applicable_law: str
+    penalty_tier: str
+    breakdown: dict
+
+
+class OperationalLoss(BaseModel):
+    downtime: dict
+    incident_response: dict
+    customer_churn: dict
+    total_min_inr: float
+    total_max_inr: float
+
+
+class AttackScenario(BaseModel):
+    scenario_id: str
+    name: str
+    description: str
+    attacker_skill: str
+    estimated_execution_time: str
+    estimated_dwell_time: str
+    data_at_risk: list[str]
+    path_count: int
+    paths: list[AttackPathCandidate]
+    total_exposure_min_inr: float
+    total_exposure_max_inr: float
+    prevention_cost_inr: float
+    prevention_summary: str
+    roi_ratio: float
+
+
+class ImpactResponse(BaseModel):
+    scan_id: int
+    company_size: str
+    industry_sector: str
+    asset_classifications: list[AssetClassification]
+    regulatory_exposure: RegulatoryExposure
+    operational_loss: OperationalLoss
+    total_exposure_min_inr: float
+    total_exposure_max_inr: float
+    total_formatted: str
+    executive_advisory: Optional[str] = None
+
+
+class ScenarioMatrixResponse(BaseModel):
+    scan_id: int
+    total_paths: int
+    total_scenarios: int
+    scenarios: list[AttackScenario]

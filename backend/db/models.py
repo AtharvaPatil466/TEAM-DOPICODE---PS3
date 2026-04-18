@@ -19,9 +19,14 @@ class Scan(Base):
     total_assets = Column(Integer, default=0)
     total_cves = Column(Integer, default=0)
 
+    company_size = Column(String, nullable=True)      # small|medium|large
+    industry_sector = Column(String, nullable=True)    # technology|retail|financial_services|healthcare|manufacturing|other
+    processes_pii = Column(Boolean, default=True)      # conservative default
+
     assets = relationship("Asset", back_populates="scan", cascade="all, delete-orphan")
     edges = relationship("GraphEdge", back_populates="scan", cascade="all, delete-orphan")
     paths = relationship("AttackPath", back_populates="scan", cascade="all, delete-orphan")
+    impact_reports = relationship("ImpactReport", back_populates="scan", cascade="all, delete-orphan")
 
 
 class Asset(Base):
@@ -122,3 +127,40 @@ class AttackPath(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     scan = relationship("Scan", back_populates="paths")
+
+
+class ImpactReport(Base):
+    __tablename__ = "impact_reports"
+    id = Column(Integer, primary_key=True)
+    scan_id = Column(Integer, ForeignKey("scans.id"), nullable=False)
+    
+    # Asset classifications
+    asset_classifications = Column(JSON)       # list[{asset_id, classification, tier}]
+    
+    # Regulatory exposure
+    regulatory_min_inr = Column(Float)         # minimum penalty ₹
+    regulatory_max_inr = Column(Float)         # maximum penalty ₹
+    regulatory_breakdown = Column(JSON)        # detailed calculation steps
+    
+    # Operational losses
+    downtime_cost_min_inr = Column(Float)
+    downtime_cost_max_inr = Column(Float)
+    incident_response_min_inr = Column(Float)
+    incident_response_max_inr = Column(Float)
+    churn_cost_min_inr = Column(Float)
+    churn_cost_max_inr = Column(Float)
+    operational_breakdown = Column(JSON)
+    
+    # Total exposure
+    total_exposure_min_inr = Column(Float)
+    total_exposure_max_inr = Column(Float)
+    
+    # Scenario matrix
+    scenario_matrix = Column(JSON)             # list[scenario_dict]
+    
+    # LLM advisory
+    executive_advisory = Column(Text, nullable=True)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    scan = relationship("Scan", back_populates="impact_reports")

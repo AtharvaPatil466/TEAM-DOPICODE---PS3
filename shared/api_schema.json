@@ -6,18 +6,21 @@
     "event_types": [
       "scan_started",
       "scan_completed",
+      "scan_failed",
       "progress",
       "host_discovered",
       "port_open",
       "cve_found",
+      "cloud_bucket_found",
       "shadow_device_detected",
-      "attack_path_computed"
+      "attack_path_computed",
+      "impact_computed"
     ]
   },
   "personas": ["script_kiddie", "criminal", "apt"],
   "endpoints": {
     "GET /health": "Liveness probe.",
-    "POST /scan/start": "Kick off a scan. Body: {domain, subnet?}. Returns {scan_id, status}.",
+    "POST /scan/start": "Kick off a scan. Body: {domain, subnet?, company_size?, industry_sector?, processes_pii?}. Returns {scan_id, status}.",
     "GET /scan/status/{id}": "Poll status for a scan.",
     "GET /scan/latest": "Metadata for the most recent scan.",
     "GET /scan/diff?before=A&after=B": "Assets/edges/paths added or removed, risk delta, time-to-breach delta.",
@@ -29,7 +32,9 @@
     "GET /attack-path?persona=criminal": "Top-ranked chain with alternates, remediations, and persona-specific time-to-breach.",
     "POST /attack-path/simulate": "Body {patched_asset_ids, patched_cve_ids, persona?}. Returns before/after plus blocked path IDs.",
     "POST /lab/validate": "Fires safe read-only probes against lab containers; stamps verified edges with response snippet.",
-    "GET /report/pdf": "Downloadable PDF with threat-analyst assessment, attack chain, inventory, and rulebook appendix."
+    "GET /report/pdf": "Downloadable PDF with threat-analyst assessment, attack chain, inventory, and rulebook appendix.",
+    "GET /impact": "Breach impact simulation including regulatory and operational losses.",
+    "GET /impact/scenarios": "Attack scenario matrix with financial exposure estimates."
   },
   "attack_path_response": {
     "hops[].attack_techniques": "list of MITRE ATT&CK IDs (T1190, T1078, ...)",

@@ -11,7 +11,7 @@ from sqlalchemy import desc
 
 from backend.config import LOG_LEVEL
 from backend.db import init_db, get_db
-from backend.db.models import Scan, Asset, Port, CVE, GraphEdge, AttackPath
+from backend.db.models import Scan, Asset, Port, CVE, GraphEdge, AttackPath, ImpactReport
 from backend.api import schemas
 from backend.api.demo_replay import replay_scan
 from backend.api.events import bus
@@ -44,7 +44,14 @@ def health() -> dict:
 async def scan_start(req: schemas.ScanStartRequest, db: Session = Depends(get_db)) -> schemas.ScanStartResponse:
     from backend.api.orchestrator import run_scan
 
-    scan = Scan(target_domain=req.domain, target_subnet=req.subnet, status="pending")
+    scan = Scan(
+        target_domain=req.domain,
+        target_subnet=req.subnet,
+        company_size=req.company_size,
+        industry_sector=req.industry_sector,
+        processes_pii=req.processes_pii if req.processes_pii is not None else True,
+        status="pending"
+    )
     db.add(scan)
     db.commit()
     db.refresh(scan)
@@ -387,4 +394,74 @@ def report_pdf(db: Session = Depends(get_db)) -> Response:
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="shadowtrace-scan-{scan.id}.pdf"'},
+    )
+
+
+@app.get("/impact", response_model=schemas.ImpactResponse)
+def impact(db: Session = Depends(get_db)) -> schemas.ImpactResponse:
+    scan = _latest_scan(db)
+    if scan is None:
+        raise HTTPException(404, "no scans available")
+    
+    report = db.query(ImpactReport).filter(ImpactReport.scan_id == scan.id).order_by(desc(ImpactReport.id)).first()
+    if not report:
+        raise HTTPException(404, "no impact report available for latest scan")
+        
+    return schemas.ImpactResponse(
+        scan_id=scan.id,
+        company_size=scan.company_size or "small",
+        industry_sector=scan.industry_sector or "technology",
+        asset_classifications=report.asset_classifications,
+        regulatory_exposure=schemas.RegulatoryExposure(
+            min_inr=report.regulatory_min_inr,
+            max_inr=report.regulatory_max_inr,
+            min_formatted=f"₹{report.regulatory_min_inr:,.0f}",  # Basic fallback formatting
+            max_formatted=f"₹{report.regulatory_max_inr:,.0f}",
+            applicable_law="DPDP Act 2023",
+            penalty_tier=report.regulatory_breakdown.get("penalty_tier", "Unknown"),
+            breakdown=report.regulatory_breakdown,
+        ),
+        operational_loss=schemas.OperationalLoss(
+            downtime={
+                "min_inr": report.downtime_cost_min_inr,
+                "max_inr": report.downtime_cost_max_inr,
+                "mttr_hours_low": report.operational_breakdown.get("mttr_low", 0),
+                "mttr_hours_high": report.operational_breakdown.get("mttr_high", 0),
+            },
+            incident_response={
+                "min_inr": report.incident_response_min_inr,
+                "max_inr": report.incident_response_max_inr,
+            },
+            customer_churn={
+                "min_inr": report.churn_cost_min_inr,
+                "max_inr": report.churn_cost_max_inr,
+            },
+            total_min_inr=report.downtime_cost_min_inr + report.incident_response_min_inr + report.churn_cost_min_inr,
+            total_max_inr=report.downtime_cost_max_inr + report.incident_response_max_inr + report.churn_cost_max_inr,
+        ),
+        total_exposure_min_inr=report.total_exposure_min_inr,
+        total_exposure_max_inr=report.total_exposure_max_inr,
+        total_formatted=f"₹{report.total_exposure_min_inr:,.0f} - ₹{report.total_exposure_max_inr:,.0f}",
+        executive_advisory=report.executive_advisory,
+    )
+
+
+@app.get("/impact/scenarios", response_model=schemas.ScenarioMatrixResponse)
+def impact_scenarios(db: Session = Depends(get_db)) -> schemas.ScenarioMatrixResponse:
+    scan = _latest_scan(db)
+    if scan is None:
+        raise HTTPException(404, "no scans available")
+        
+    report = db.query(ImpactReport).filter(ImpactReport.scan_id == scan.id).order_by(desc(ImpactReport.id)).first()
+    if not report:
+        raise HTTPException(404, "no impact report available for latest scan")
+        
+    scenarios = report.scenario_matrix or []
+    total_paths = sum(s.get("path_count", 0) for s in scenarios)
+    
+    return schemas.ScenarioMatrixResponse(
+        scan_id=scan.id,
+        total_paths=total_paths,
+        total_scenarios=len(scenarios),
+        scenarios=scenarios,
     )
