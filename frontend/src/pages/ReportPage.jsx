@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import ReportSectionList from "../components/reports/ReportSectionList";
-import { fetchDashboardData } from "../services/api";
+import { fetchDashboardData, reportPdfUrl } from "../services/api";
 
 function ReportPage() {
   const [data, setData] = useState(null);
@@ -20,7 +20,11 @@ function ReportPage() {
           <p className="eyebrow">Deliverable</p>
           <h2>CTO-ready remediation report</h2>
         </div>
-        <button type="button" className="button primary">
+        <button
+          type="button"
+          className="button primary"
+          onClick={() => window.open(reportPdfUrl(), "_blank", "noopener,noreferrer")}
+        >
           Export PDF
         </button>
       </div>

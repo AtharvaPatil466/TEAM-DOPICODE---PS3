@@ -2,13 +2,29 @@ import { useMemo, useState } from "react";
 import { severityColors } from "../../utils/theme";
 
 function SurfaceGraph({ graph, details }) {
-  const [selectedNodeId, setSelectedNodeId] = useState("admin");
-
-  const selected = details[selectedNodeId];
+  const [selectedNodeId, setSelectedNodeId] = useState(graph.nodes[0]?.id ?? null);
 
   const nodeMap = useMemo(() => {
     return Object.fromEntries(graph.nodes.map((node) => [node.id, node]));
   }, [graph.nodes]);
+
+  const selected = selectedNodeId == null ? null : details[selectedNodeId];
+
+  if (!graph.nodes.length) {
+    return (
+      <div className="graph-layout">
+        <section className="panel graph-panel">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Visual map</p>
+              <h2>Public attack surface</h2>
+            </div>
+          </div>
+          <p className="section-copy">No cached graph is available yet. Seed the backend demo and replay it first.</p>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="graph-layout">
@@ -24,6 +40,9 @@ function SurfaceGraph({ graph, details }) {
           {graph.edges.map((edge) => {
             const from = nodeMap[edge.from];
             const to = nodeMap[edge.to];
+            if (!from || !to) {
+              return null;
+            }
 
             return (
               <line
@@ -61,10 +80,10 @@ function SurfaceGraph({ graph, details }) {
 
       <aside className="panel detail-panel">
         <p className="eyebrow">Selected asset</p>
-        <h2>{selected?.title}</h2>
-        <p>{selected?.summary}</p>
+        <h2>{selected?.title || "Select a node"}</h2>
+        <p>{selected?.summary || "Choose a node to inspect the seeded evidence behind it."}</p>
         <ul className="detail-list">
-          {selected?.bullets.map((bullet) => (
+          {(selected?.bullets || []).map((bullet) => (
             <li key={bullet}>{bullet}</li>
           ))}
         </ul>
