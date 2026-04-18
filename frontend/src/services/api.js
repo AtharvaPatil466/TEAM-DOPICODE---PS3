@@ -4,6 +4,7 @@ import {
   buildExecutiveSummaryPrompt,
   buildAnalystReportPrompt,
   buildHopRationalePrompt,
+  buildCtoSummaryPrompt,
 } from "./llm";
 
 // API_BASE can be:
@@ -204,6 +205,9 @@ function layoutRow(nodes, y) {
 }
 
 function buildGraphModel(graph, assetsById) {
+  if (!graph || !graph.nodes) {
+    return { nodes: [], edges: [] };
+  }
   const internetNode = graph.nodes.find((node) => node.id === 0);
   const assetNodes = graph.nodes.filter((node) => node.id !== 0);
 
@@ -268,7 +272,7 @@ function buildGraphModel(graph, assetsById) {
 
   return {
     nodes: laidOutNodes,
-    edges: graph.edges.map((edge) => ({
+    edges: (graph.edges || []).map((edge) => ({
       from: edge.source,
       to: edge.target,
       relationship: edge.relationship,
@@ -337,7 +341,7 @@ function buildKillChainSteps(attackPath, assetsById, latestScan) {
     }
   ];
 
-  if (!attackPath.hops?.length) {
+  if (!attackPath?.hops?.length) {
     steps.push({
       title: "Priority exposure",
       summary: "No full attack path is cached for this scan, so the demo falls back to the highest-risk public finding."
@@ -640,6 +644,8 @@ export async function fetchDashboardData() {
     const graphModel = buildGraphModel(graph, assetsById);
     const storageFindings = assets.filter((asset) => asset.asset_type === "storage").length;
     const maxRisk = Math.max(...assets.map((asset) => asset.risk_score || 0), 0);
+    const criticalFindings = findingRows.filter(r => r.severity === "Critical").length;
+    const totalFindings = findingRows.length;
 
     const allPathValidations = [
       attackPath.validation,
@@ -728,5 +734,16 @@ export async function fetchScanDiff(beforeId, afterId) {
 
 export async function fetchRulebook() {
   return fetchJson("/rulebook");
+}
+
+export async function fetchCtoSummary(domain, issueCount, criticalCount, findingRows) {
+  const topFinding = findingRows && findingRows.length > 0 ? findingRows[0].reason : null;
+  const prompt = buildCtoSummaryPrompt(domain, issueCount, criticalCount, topFinding);
+  
+  const narrative = await generateNarrative(prompt);
+  if (narrative) return narrative;
+
+  // Fallback
+  return `We found ${issueCount} issues with ${domain}. ${criticalCount} are critical and need immediate attention. The most urgent issue is ${topFinding || 'an exposed area'} which anyone on the internet can access.`;
 }
 

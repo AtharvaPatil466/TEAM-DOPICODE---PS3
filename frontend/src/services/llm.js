@@ -65,3 +65,10 @@ export function buildAnalystReportPrompt(assetCount, criticalCves, crownJewel) {
   const jewelPart = crownJewel ? ` ends at ${crownJewel}` : "";
   return `Write a 4-sentence analyst summary for a security report. Assets: ${assetCount}. Critical CVEs: ${cveList}. Attack path${jewelPart}. Tone: professional, direct.`;
 }
+
+/**
+ * Build CTO plain English summary prompt
+ */
+export function buildCtoSummaryPrompt(domain, issueCount, criticalCount, topFindingTitle) {
+  return `Write a 1-paragraph plain English summary for a business executive. Start exactly with "We found ${issueCount} issues with ${domain}. ${criticalCount} are critical and need immediate attention." The most urgent issue is: ${topFindingTitle || 'none'}. Summarize the urgent issue in one plain English sentence without any technical jargon or CVE IDs. That is the entire summary.`;
+}
