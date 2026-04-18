@@ -20,6 +20,8 @@ class EdgeSpec:
     weight: float
     rule_id: str
     rationale: str
+    attack_techniques: list[str]
+    evidence: dict
 
 
 def _edge_weight(target: Asset) -> float:
@@ -85,6 +87,8 @@ def build_edges(scan: Scan) -> list[EdgeSpec]:
             weight=_effective_weight(dst, match),
             rule_id=match.rule_id,
             rationale=match.rationale,
+            attack_techniques=list(match.attack_techniques),
+            evidence=dict(match.evidence),
         ))
 
     for src in assets:
@@ -101,6 +105,8 @@ def build_edges(scan: Scan) -> list[EdgeSpec]:
                 weight=_effective_weight(dst, match),
                 rule_id=match.rule_id,
                 rationale=match.rationale,
+                attack_techniques=list(match.attack_techniques),
+                evidence=dict(match.evidence),
             ))
     return edges
 
@@ -116,6 +122,8 @@ def persist_edges(db: Session, scan: Scan, edges: list[EdgeSpec]) -> None:
             weight=edge.weight,
             rule_id=edge.rule_id,
             rationale=edge.rationale,
+            attack_techniques=edge.attack_techniques,
+            evidence=edge.evidence,
         ))
     db.commit()
 
@@ -140,5 +148,7 @@ def to_networkx(scan: Scan, edges: list[EdgeSpec]) -> nx.DiGraph:
             rule_id=edge.rule_id,
             rule_name=RULES_BY_ID[edge.rule_id].name if edge.rule_id in RULES_BY_ID else edge.rule_id,
             rationale=edge.rationale,
+            attack_techniques=edge.attack_techniques,
+            evidence=edge.evidence,
         )
     return graph

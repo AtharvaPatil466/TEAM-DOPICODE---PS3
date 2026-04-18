@@ -1,11 +1,11 @@
 """Named rulebook for graph edge creation.
 
 Every edge in the attack graph is produced by exactly one named rule in this
-module. When a judge asks "why does this edge exist?", the answer should be a
-rule ID plus a deterministic rationale tied to the evidence on the source and
-target assets.
+module. When a judge asks "why does this edge exist?", the answer is a rule
+ID + human rationale + MITRE ATT&CK technique(s) + a structured evidence dict
+naming the specific fields that satisfied the predicate.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from backend.db.models import Asset, CVE
@@ -20,6 +20,8 @@ class RuleMatch:
     relationship: str
     rationale: str
     weight_modifier: float = 1.0
+    attack_techniques: list[str] = field(default_factory=list)
+    evidence: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -27,6 +29,7 @@ class EdgeRule:
     id: str
     name: str
     description: str
+    attack_techniques: list[str]
     evaluate: Callable[[Optional[Asset], Asset, dict], Optional[RuleMatch]]
 
 
@@ -76,26 +79,38 @@ def _remote_exploit_cve(asset: Asset) -> Optional[CVE]:
     return best or _strongest_cve(asset, min_cvss=8.0, vector="NETWORK")
 
 
-def _auth_cve(asset: Asset) -> Optional[CVE]:
+def _matched_rce_keyword(cve: CVE) -> Optional[str]:
+    desc = (cve.description or "").lower()
+    for keyword in _RCE_KEYWORDS:
+        if keyword in desc:
+            return keyword
+    return None
+
+
+def _auth_cve(asset: Asset) -> tuple[Optional[CVE], Optional[str]]:
     best: Optional[CVE] = None
+    matched_keyword: Optional[str] = None
     for cve in asset.cves:
         desc = (cve.description or "").lower()
-        if not any(keyword in desc for keyword in _AUTH_KEYWORDS):
+        hit = next((keyword for keyword in _AUTH_KEYWORDS if keyword in desc), None)
+        if hit is None:
             continue
         if best is None or (cve.cvss_score or 0) > (best.cvss_score or 0):
             best = cve
-    return best
+            matched_keyword = hit
+    return best, matched_keyword
 
 
-def _has_login_surface(asset: Asset) -> bool:
+def _login_panel_paths(asset: Asset) -> list[str]:
+    hits: list[str] = []
     for panel in asset.admin_panels or []:
         path = (panel.get("path") or "").lower()
         if any(keyword in path for keyword in _LOGIN_KEYWORDS):
-            return True
-    return False
+            hits.append(panel.get("path") or "")
+    return hits
 
 
-def _has_mfa_signal(asset: Asset) -> bool:
+def _has_mfa_signal(asset: Asset) -> Optional[str]:
     haystacks = []
     if asset.tech_stack:
         haystacks.append(str(asset.tech_stack).lower())
@@ -103,7 +118,11 @@ def _has_mfa_signal(asset: Asset) -> bool:
         haystacks.append(str(asset.admin_panels).lower())
     if asset.ssl_info:
         haystacks.append(str(asset.ssl_info).lower())
-    return any(keyword in " ".join(haystacks) for keyword in _MFA_KEYWORDS)
+    blob = " ".join(haystacks)
+    for keyword in _MFA_KEYWORDS:
+        if keyword in blob:
+            return keyword
+    return None
 
 
 def _net_002(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch]:
@@ -122,6 +141,8 @@ def _net_002(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch]
         "Internet Reachability",
         "internet_reachable",
         f"{_label(dst)} is internet-facing and was confirmed during {evidence}.",
+        attack_techniques=["T1595", "T1590"],
+        evidence={"surfaces_confirmed": surfaces, "exposure": dst.exposure},
     )
 
 
@@ -132,13 +153,15 @@ def _misc_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch
     unauth = [panel for panel in panels if not panel.get("auth")]
     if not unauth:
         return None
-    paths = ", ".join(panel.get("path", "?") for panel in unauth[:3])
+    paths = [panel.get("path", "?") for panel in unauth[:3]]
     return RuleMatch(
         "MISC-001",
         "Exposed Admin Panel",
         "admin_exposure",
-        f"{_label(dst)} exposes unauthenticated admin/login surface(s) at {paths}.",
+        f"{_label(dst)} exposes unauthenticated admin/login surface(s) at {', '.join(paths)}.",
         weight_modifier=0.7,
+        attack_techniques=["T1190", "T1133"],
+        evidence={"unauthenticated_panels": paths},
     )
 
 
@@ -147,12 +170,16 @@ def _conf_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch
         return None
     ssl_info = dst.ssl_info or {}
     flaw = None
+    evidence_key = None
     if ssl_info.get("expired"):
         flaw = "expired certificate"
+        evidence_key = "expired"
     elif ssl_info.get("self_signed"):
         flaw = "self-signed certificate"
+        evidence_key = "self_signed"
     elif ssl_info.get("hostname_match") is False:
         flaw = "certificate hostname mismatch"
+        evidence_key = "hostname_match"
     if flaw is None:
         return None
     return RuleMatch(
@@ -161,6 +188,8 @@ def _conf_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch
         "tls_weakness",
         f"{_label(dst)} presents a {flaw}, weakening trust and credential handling.",
         weight_modifier=0.95,
+        attack_techniques=["T1557", "T1040"],
+        evidence={"tls_flaw": evidence_key, "ssl_info": {k: ssl_info.get(k) for k in ("expired", "self_signed", "hostname_match")}},
     )
 
 
@@ -178,6 +207,8 @@ def _supply_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMat
         "outdated_software",
         f"{_label(dst)} runs {tech['name']} {tech['version']} with {len(dst.cves)} mapped CVE(s).",
         weight_modifier=0.9,
+        attack_techniques=["T1195.002"],
+        evidence={"component": tech.get("name"), "version": tech.get("version"), "cve_count": len(dst.cves)},
     )
 
 
@@ -187,8 +218,8 @@ def _cloud_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatc
     meta = dst.tech_stack or {}
     if meta.get("issue") != "public_listing":
         return None
-    sample_files = ", ".join((meta.get("sample_files") or [])[:3])
-    sample_hint = f" Sample objects include {sample_files}." if sample_files else ""
+    sample_files = (meta.get("sample_files") or [])[:3]
+    sample_hint = f" Sample objects include {', '.join(sample_files)}." if sample_files else ""
     bucket_name = meta.get("bucket_name") or _label(dst)
     return RuleMatch(
         "CLOUD-001",
@@ -196,6 +227,8 @@ def _cloud_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatc
         "public_bucket",
         f"{bucket_name} allows unauthenticated object listing and direct data exposure.{sample_hint}",
         weight_modifier=0.4,
+        attack_techniques=["T1530", "T1619"],
+        evidence={"bucket": bucket_name, "issue": meta.get("issue"), "sample_files": sample_files},
     )
 
 
@@ -204,6 +237,7 @@ def _exp_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch]
     if cve is None:
         return None
     complexity = (cve.attack_complexity or "").upper()[:1] or "?"
+    matched = _matched_rce_keyword(cve)
     return RuleMatch(
         "EXP-001",
         "Remote Exploit",
@@ -211,15 +245,25 @@ def _exp_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch]
         f"{_label(dst)} exposes {cve.cve_id} (CVSS {cve.cvss_score}, AV:N, AC:{complexity}), "
         "making direct remote exploitation viable.",
         weight_modifier=0.5,
+        attack_techniques=["T1190", "T1210"],
+        evidence={
+            "cve_id": cve.cve_id,
+            "cvss": cve.cvss_score,
+            "attack_vector": cve.attack_vector,
+            "attack_complexity": cve.attack_complexity,
+            "matched_keyword": matched,
+        },
     )
 
 
 def _cred_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch]:
-    if not _has_login_surface(dst):
+    login_paths = _login_panel_paths(dst)
+    if not login_paths:
         return None
-    if _has_mfa_signal(dst):
+    mfa_hit = _has_mfa_signal(dst)
+    if mfa_hit is not None:
         return None
-    auth_cve = _auth_cve(dst)
+    auth_cve, matched = _auth_cve(dst)
     if auth_cve is None:
         return None
     return RuleMatch(
@@ -229,6 +273,13 @@ def _cred_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch
         f"{_label(dst)} presents a login surface, shows no MFA indicator, and carries "
         f"{auth_cve.cve_id} (CVSS {auth_cve.cvss_score}) in the authentication layer.",
         weight_modifier=0.65,
+        attack_techniques=["T1078", "T1110", "T1556"],
+        evidence={
+            "login_paths": login_paths,
+            "mfa_signal": None,
+            "cve_id": auth_cve.cve_id,
+            "matched_keyword": matched,
+        },
     )
 
 
@@ -246,6 +297,14 @@ def _exp_002(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch]
         f"After landing on subnet {ctx['subnet_of'](dst)}, {cve.cve_id} (CVSS {cve.cvss_score}, "
         f"AV:L, AC:{complexity}) can elevate privileges on {_label(dst)}.",
         weight_modifier=0.8,
+        attack_techniques=["T1068", "T1548"],
+        evidence={
+            "subnet": ctx["subnet_of"](dst),
+            "cve_id": cve.cve_id,
+            "cvss": cve.cvss_score,
+            "attack_vector": cve.attack_vector,
+            "attack_complexity": cve.attack_complexity,
+        },
     )
 
 
@@ -259,6 +318,8 @@ def _net_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch]
         "Lateral Reachability",
         "lateral_move",
         f"{_label(src)} and {_label(dst)} share {ctx['subnet_of'](dst)} with no segmentation evidence.",
+        attack_techniques=["T1021", "T1570"],
+        evidence={"subnet": ctx["subnet_of"](dst), "segmentation": "none_observed"},
     )
 
 
@@ -273,6 +334,8 @@ def _shadow_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMat
         "shadow_pivot",
         f"Unmanaged device {_label(src)} sits on the same subnet as {_label(dst)} and can bypass monitored paths.",
         weight_modifier=0.75,
+        attack_techniques=["T1200", "T1021"],
+        evidence={"shadow_source": _label(src), "subnet": ctx["subnet_of"](dst)},
     )
 
 
@@ -287,32 +350,45 @@ def _data_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch
         "crown_jewel_access",
         f"{_label(dst)} is tagged as the crown jewel and is reachable from compromised host {_label(src)}.",
         weight_modifier=0.5,
+        attack_techniques=["T1213", "T1005", "T1041"],
+        evidence={"target": _label(dst), "source": _label(src), "tag": "crown_jewel"},
     )
 
 
 RULES: list[EdgeRule] = [
     EdgeRule("NET-002", "Internet Reachability",
-             "External asset is confirmed reachable from the public internet.", _net_002),
+             "External asset is confirmed reachable from the public internet.",
+             ["T1595", "T1590"], _net_002),
     EdgeRule("MISC-001", "Exposed Admin Panel",
-             "External asset exposes unauthenticated admin or login functionality.", _misc_001),
+             "External asset exposes unauthenticated admin or login functionality.",
+             ["T1190", "T1133"], _misc_001),
     EdgeRule("CONF-001", "Weak TLS Posture",
-             "TLS certificate state weakens trust or enables interception scenarios.", _conf_001),
+             "TLS certificate state weakens trust or enables interception scenarios.",
+             ["T1557", "T1040"], _conf_001),
     EdgeRule("SUPPLY-001", "Outdated Dependency",
-             "Fingerprinted software version is tied to known CVE exposure.", _supply_001),
+             "Fingerprinted software version is tied to known CVE exposure.",
+             ["T1195.002"], _supply_001),
     EdgeRule("CLOUD-001", "Public Bucket Exposure",
-             "Cloud object storage is publicly listable and exposes stored data directly.", _cloud_001),
+             "Cloud object storage is publicly listable and exposes stored data directly.",
+             ["T1530", "T1619"], _cloud_001),
     EdgeRule("EXP-001", "Remote Exploit",
-             "Service version has a high-severity network-exploitable CVE.", _exp_001),
+             "Service version has a high-severity network-exploitable CVE.",
+             ["T1190", "T1210"], _exp_001),
     EdgeRule("CRED-001", "Credential Path",
-             "Login surface exists, MFA indicators are absent, and an auth-related CVE exists.", _cred_001),
+             "Login surface exists, MFA indicators are absent, and an auth-related CVE exists.",
+             ["T1078", "T1110", "T1556"], _cred_001),
     EdgeRule("EXP-002", "Privilege Escalation",
-             "Target has a local privilege-escalation CVE usable after subnet foothold.", _exp_002),
+             "Target has a local privilege-escalation CVE usable after subnet foothold.",
+             ["T1068", "T1548"], _exp_002),
     EdgeRule("NET-001", "Lateral Reachability",
-             "Source and target share a /24 and there is no segmentation evidence.", _net_001),
+             "Source and target share a /24 and there is no segmentation evidence.",
+             ["T1021", "T1570"], _net_001),
     EdgeRule("SHADOW-001", "Shadow Device Pivot",
-             "Unmanaged device on the same subnet can move laterally toward the target.", _shadow_001),
+             "Unmanaged device on the same subnet can move laterally toward the target.",
+             ["T1200", "T1021"], _shadow_001),
     EdgeRule("DATA-001", "Crown Jewel Access",
-             "Compromised source can reach a designated crown-jewel asset.", _data_001),
+             "Compromised source can reach a designated crown-jewel asset.",
+             ["T1213", "T1005", "T1041"], _data_001),
 ]
 
 RULES_BY_ID: dict[str, EdgeRule] = {rule.id: rule for rule in RULES}
@@ -329,6 +405,11 @@ def evaluate_all(src: Optional[Asset], dst: Asset, ctx: dict) -> list[RuleMatch]
 
 def rulebook() -> list[dict]:
     return [
-        {"id": rule.id, "name": rule.name, "description": rule.description}
+        {
+            "id": rule.id,
+            "name": rule.name,
+            "description": rule.description,
+            "attack_techniques": rule.attack_techniques,
+        }
         for rule in RULES
     ]

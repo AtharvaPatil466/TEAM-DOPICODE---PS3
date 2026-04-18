@@ -4,14 +4,16 @@ Page 1: Threat-analyst assessment generated from structured attack-chain JSON.
 Page 2: Attack-surface overview counters.
 Page 3: Primary attack chain with named-rule evidence.
 Page 4+: Asset inventory and rulebook appendix.
+
+Path ranking and remediation aggregation live in
+`backend.intelligence.attack_path` so the PDF, the `/attack-path` API, and the
+orchestrator agree on the same primary chain.
 """
 import html
 import io
 import json
 import logging
-from itertools import islice
 
-import networkx as nx
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -27,10 +29,15 @@ from reportlab.platypus import (
 from sqlalchemy.orm import Session
 
 from backend.config import ANTHROPIC_API_KEY
-from backend.db.models import Asset, CVE, Scan
+from backend.db.models import Asset, Scan
 
+from .attack_path import (
+    build_candidate_paths,
+    build_remediation_candidates,
+    path_sentence,
+)
 from .edge_rules import rulebook as named_rulebook
-from .graph_builder import INTERNET_NODE, build_edges, to_networkx
+from .graph_builder import build_edges, to_networkx
 
 log = logging.getLogger(__name__)
 
@@ -52,246 +59,6 @@ def _risk_color(score: float) -> colors.Color:
 
 def _asset_label(asset: Asset) -> str:
     return asset.hostname or asset.ip_address or f"asset-{asset.id}"
-
-
-def _top_cve(asset: Asset) -> CVE | None:
-    return max(asset.cves, key=lambda cve: cve.cvss_score or 0, default=None)
-
-
-def _pick_entry_and_target(g: nx.DiGraph, scan: Scan) -> tuple[int | None, int | None]:
-    entry: int | None = None
-    if g.out_degree(INTERNET_NODE) > 0:
-        entry = INTERNET_NODE
-    else:
-        externals = [asset for asset in scan.assets if asset.exposure == "external"]
-        if externals:
-            entry = max(externals, key=lambda asset: asset.risk_score or 0).id
-
-    crowns = [asset for asset in scan.assets if asset.is_crown_jewel]
-    if crowns:
-        target = max(crowns, key=lambda asset: asset.risk_score or 0).id
-    else:
-        internals = [asset for asset in scan.assets if asset.exposure == "internal"]
-        if internals:
-            target = max(internals, key=lambda asset: asset.risk_score or 0).id
-        else:
-            externals = [asset for asset in scan.assets if asset.exposure == "external"]
-            target = max(externals, key=lambda asset: asset.risk_score or 0).id if externals else None
-    return entry, target
-
-
-def _estimate_hop_minutes(cve: CVE | None, relationship: str | None) -> tuple[int, int]:
-    if cve is None:
-        base = {
-            "internet_reachable": (45, 120),
-            "admin_exposure": (30, 90),
-            "credential_access": (45, 180),
-            "public_bucket": (15, 45),
-            "lateral_move": (60, 180),
-            "shadow_pivot": (45, 120),
-            "crown_jewel_access": (60, 180),
-        }
-        return base.get(relationship or "", (60, 180))
-
-    vector = (cve.attack_vector or "").upper()
-    complexity = (cve.attack_complexity or "").upper()
-    matrix = {
-        ("NETWORK", "LOW"): (30, 90),
-        ("NETWORK", "HIGH"): (180, 480),
-        ("ADJACENT", "LOW"): (60, 180),
-        ("ADJACENT", "HIGH"): (240, 720),
-        ("LOCAL", "LOW"): (120, 360),
-        ("LOCAL", "HIGH"): (480, 1440),
-        ("PHYSICAL", "LOW"): (1440, 2880),
-        ("PHYSICAL", "HIGH"): (2880, 4320),
-    }
-    low, high = matrix.get((vector, complexity), (90, 240))
-    if relationship in {"credential_access", "admin_exposure"}:
-        low += 30
-        high += 120
-    elif relationship in {"tls_weakness", "outdated_software"}:
-        low += 60
-        high += 180
-    elif relationship == "crown_jewel_access":
-        low += 30
-        high += 90
-    return low, high
-
-
-def _format_duration(minutes: int) -> str:
-    if minutes < 60:
-        return f"{minutes} minutes"
-    if minutes < 1440:
-        hours = max(1, round(minutes / 60))
-        return f"{hours} hour" if hours == 1 else f"{hours} hours"
-    days = max(1, round(minutes / 1440))
-    return f"{days} day" if days == 1 else f"{days} days"
-
-
-def _format_duration_range(low: int, high: int) -> str:
-    return f"{_format_duration(low)} to {_format_duration(high)}"
-
-
-def _build_candidate_paths(scan: Scan, g: nx.DiGraph, limit: int = 3) -> list[dict]:
-    entry, target = _pick_entry_and_target(g, scan)
-    if entry is None or target is None or entry == target:
-        return []
-    if entry not in g or target not in g:
-        return []
-
-    assets_by_id = {asset.id: asset for asset in scan.assets}
-    try:
-        raw_paths = list(islice(nx.shortest_simple_paths(g, entry, target, weight="weight"), limit))
-    except (nx.NetworkXNoPath, nx.NodeNotFound):
-        return []
-
-    candidates: list[dict] = []
-    for index, path in enumerate(raw_paths, start=1):
-        hops: list[dict] = []
-        total_weight = 0.0
-        total_low = 0
-        total_high = 0
-        for hop_index, (source, target_id) in enumerate(zip(path, path[1:]), start=1):
-            edge = g.get_edge_data(source, target_id, default={})
-            total_weight += edge.get("weight", 0.0)
-            asset = assets_by_id.get(target_id)
-            if asset is None:
-                continue
-            top_cve = _top_cve(asset)
-            hop_low, hop_high = _estimate_hop_minutes(top_cve, edge.get("relationship"))
-            total_low += hop_low
-            total_high += hop_high
-            source_label = "Internet" if source == INTERNET_NODE else _asset_label(assets_by_id[source])
-            hops.append({
-                "step": hop_index,
-                "source_id": source,
-                "target_id": target_id,
-                "source_label": source_label,
-                "target_label": _asset_label(asset),
-                "role": "crown jewel" if asset.is_crown_jewel else (asset.asset_type or "asset"),
-                "rule_id": edge.get("rule_id"),
-                "rule_name": edge.get("rule_name"),
-                "relationship": edge.get("relationship"),
-                "rationale": edge.get("rationale"),
-                "cve_id": top_cve.cve_id if top_cve else None,
-                "cvss": top_cve.cvss_score if top_cve else None,
-                "attack_vector": top_cve.attack_vector if top_cve else None,
-                "attack_complexity": top_cve.attack_complexity if top_cve else None,
-                "remediation": top_cve.remediation if top_cve else None,
-                "estimated_minutes_low": hop_low,
-                "estimated_minutes_high": hop_high,
-                "estimated_window": _format_duration_range(hop_low, hop_high),
-            })
-
-        candidates.append({
-            "path_id": f"PATH-{index:02d}",
-            "asset_sequence": path,
-            "sequence_labels": [
-                "Internet" if asset_id == INTERNET_NODE else _asset_label(assets_by_id[asset_id])
-                for asset_id in path
-                if asset_id == INTERNET_NODE or asset_id in assets_by_id
-            ],
-            "total_risk_score": round(
-                sum((assets_by_id[asset_id].risk_score or 0.0) for asset_id in path if asset_id in assets_by_id),
-                1,
-            ),
-            "total_weight": round(total_weight, 2),
-            "estimated_minutes_low": total_low,
-            "estimated_minutes_high": total_high,
-            "estimated_window": _format_duration_range(total_low, total_high),
-            "hops": hops,
-        })
-    return candidates
-
-
-def _fix_for_hop(hop: dict) -> dict:
-    target_id = hop["target_id"]
-    target_label = hop["target_label"]
-    remediation = (hop.get("remediation") or "").strip()
-    if remediation:
-        summary = remediation.rstrip(".")
-        if target_label.lower() not in summary.lower():
-            summary = f"{summary} on {target_label}"
-        return {
-            "key": f"asset:{target_id}:patch",
-            "summary": summary + ".",
-            "target_id": target_id,
-            "rule_id": hop.get("rule_id"),
-            "cvss": hop.get("cvss") or 0.0,
-        }
-
-    rule_id = hop.get("rule_id")
-    fallback = {
-        "CRED-001": f"Put {target_label} behind SSO and MFA, and remove direct internet exposure for login/admin paths.",
-        "CONF-001": f"Replace the certificate and enforce valid TLS on {target_label}.",
-        "NET-001": f"Segment east-west access to {target_label} and restrict unnecessary service ports.",
-        "NET-002": f"Reduce public exposure to {target_label} with allowlists, VPN-only access, or service shutdown.",
-        "MISC-001": f"Require authentication and IP restriction for the admin surface on {target_label}.",
-        "SHADOW-001": f"Remove unmanaged subnet access around {target_label} or place it behind monitored controls.",
-        "DATA-001": f"Restrict direct access to crown-jewel system {target_label} to approved application hosts only.",
-        "EXP-002": f"Patch or harden local privilege-escalation paths on {target_label}.",
-    }
-    return {
-        "key": f"asset:{target_id}:{rule_id or 'control'}",
-        "summary": fallback.get(rule_id, f"Reduce direct reachability to {target_label} and harden the exposed service."),
-        "target_id": target_id,
-        "rule_id": rule_id,
-        "cvss": hop.get("cvss") or 0.0,
-    }
-
-
-def _build_remediation_candidates(paths: list[dict]) -> list[dict]:
-    aggregated: dict[str, dict] = {}
-    for path in paths:
-        seen_keys: set[str] = set()
-        for hop in path["hops"]:
-            fix = _fix_for_hop(hop)
-            key = fix["key"]
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-            bucket = aggregated.setdefault(key, {
-                "summary": fix["summary"],
-                "path_ids": set(),
-                "hop_indexes": [],
-                "target_assets": set(),
-                "rule_ids": set(),
-                "max_cvss": 0.0,
-            })
-            bucket["path_ids"].add(path["path_id"])
-            bucket["hop_indexes"].append(hop["step"])
-            bucket["target_assets"].add(hop["target_label"])
-            if hop.get("rule_id"):
-                bucket["rule_ids"].add(hop["rule_id"])
-            bucket["max_cvss"] = max(bucket["max_cvss"], fix["cvss"])
-
-    candidates: list[dict] = []
-    for bucket in aggregated.values():
-        candidates.append({
-            "summary": bucket["summary"],
-            "blocks_paths": len(bucket["path_ids"]),
-            "path_ids": sorted(bucket["path_ids"]),
-            "avg_hop_index": round(sum(bucket["hop_indexes"]) / len(bucket["hop_indexes"]), 2),
-            "target_assets": sorted(bucket["target_assets"]),
-            "rule_ids": sorted(bucket["rule_ids"]),
-            "max_cvss": bucket["max_cvss"],
-        })
-    candidates.sort(
-        key=lambda item: (-item["blocks_paths"], item["avg_hop_index"], -item["max_cvss"], item["summary"])
-    )
-    return candidates
-
-
-def _path_sentence(path: dict) -> str:
-    chain: list[str] = []
-    for label, hop in zip(path["sequence_labels"][1:], path["hops"]):
-        token = label
-        if hop.get("rule_id"):
-            token += f" [{hop['rule_id']}]"
-        if hop.get("cve_id"):
-            token += f" via {hop['cve_id']}"
-        chain.append(token)
-    return "Internet -> " + " -> ".join(chain)
 
 
 def _chain_payload(scan: Scan, paths: list[dict], remediations: list[dict]) -> dict:
@@ -328,7 +95,7 @@ def _fallback_assessment(paths: list[dict], remediations: list[dict]) -> str:
         else "Patch the first externally reachable hop in the path and recompute the graph."
     )
     return (
-        f"Most likely path: {_path_sentence(primary)}. This route has the lowest effective resistance in the graph "
+        f"Most likely path: {path_sentence(primary)}. This route has the lowest effective resistance in the graph "
         f"and strings together the cleanest exploit path into the highest-impact objective in scope.\n\n"
         f"Time to breach: A realistic operator could move from initial access to impact in "
         f"{primary['estimated_window']}. The slowest step is {slowest_hop['target_label']} under "
@@ -385,8 +152,8 @@ def build_pdf(db: Session, scan: Scan) -> bytes:
 
     edges = build_edges(scan)
     graph = to_networkx(scan, edges)
-    candidate_paths = _build_candidate_paths(scan, graph)
-    remediation_candidates = _build_remediation_candidates(candidate_paths)
+    candidate_paths = build_candidate_paths(scan, graph)
+    remediation_candidates = build_remediation_candidates(candidate_paths)
     analyst_assessment = _analyst_assessment(scan, candidate_paths, remediation_candidates)
     primary_path = candidate_paths[0] if candidate_paths else None
 
@@ -432,7 +199,7 @@ def build_pdf(db: Session, scan: Scan) -> bytes:
         ["Exposed admin panels", admin_count],
         ["Shadow devices detected", shadow_count],
         ["CVEs found (total)", scan.total_cves],
-        ["Critical CVEs (CVSS ≥ 9)", critical_cves],
+        ["Critical CVEs (CVSS \u2265 9)", critical_cves],
     ]
     overview_table = Table(overview, colWidths=[3.5 * inch, 1.5 * inch])
     overview_table.setStyle(TableStyle([
@@ -448,7 +215,7 @@ def build_pdf(db: Session, scan: Scan) -> bytes:
     if primary_path is None:
         elems.append(Paragraph("No attack path computed.", body))
     else:
-        elems.append(Paragraph(f"Selected path: <b>{html.escape(_path_sentence(primary_path))}</b>", body))
+        elems.append(Paragraph(f"Selected path: <b>{html.escape(path_sentence(primary_path))}</b>", body))
         elems.append(Paragraph(
             f"Total path risk: <b>{primary_path['total_risk_score']}</b> | "
             f"Estimated time to breach: <b>{html.escape(primary_path['estimated_window'])}</b>",
@@ -466,9 +233,9 @@ def build_pdf(db: Session, scan: Scan) -> bytes:
                 hop["step"],
                 hop["target_label"],
                 hop["role"],
-                hop.get("rule_id") or "—",
-                hop.get("cve_id") or "—",
-                f"{hop['cvss']}" if hop.get("cvss") else "—",
+                hop.get("rule_id") or "\u2014",
+                hop.get("cve_id") or "\u2014",
+                f"{hop['cvss']}" if hop.get("cvss") else "\u2014",
             ])
         chain_table = Table(rows, colWidths=[0.45 * inch, 1.8 * inch, 1.05 * inch, 0.9 * inch, 1.55 * inch, 0.55 * inch])
         chain_table.setStyle(TableStyle([
@@ -484,7 +251,7 @@ def build_pdf(db: Session, scan: Scan) -> bytes:
         for hop in primary_path["hops"]:
             evidence = (
                 f"Hop {hop['step']} ({hop['source_label']} -> {hop['target_label']}): "
-                f"{hop.get('rule_id') or hop.get('relationship')} — {hop.get('rationale') or 'No rationale recorded.'}"
+                f"{hop.get('rule_id') or hop.get('relationship')} \u2014 {hop.get('rationale') or 'No rationale recorded.'}"
             )
             elems.append(Paragraph(_paragraph_text(evidence), body))
     elems.append(PageBreak())
@@ -520,8 +287,8 @@ def build_pdf(db: Session, scan: Scan) -> bytes:
             for cve in sorted(asset.cves, key=lambda item: -(item.cvss_score or 0))[:5]:
                 rows.append([
                     cve.cve_id,
-                    f"{cve.cvss_score or '—'}",
-                    cve.attack_complexity or "—",
+                    f"{cve.cvss_score or '\u2014'}",
+                    cve.attack_complexity or "\u2014",
                     cve.remediation or "",
                 ])
             cve_table = Table(rows, colWidths=[1.2 * inch, 0.55 * inch, 0.45 * inch, 3.8 * inch])
