@@ -14,6 +14,17 @@ function KillChainPage() {
 
   return (
     <section className="page">
+      <section className="hero-card page-intro">
+        <div>
+          <p className="eyebrow">Impact projection</p>
+          <h2>Move from isolated findings to a believable attack story.</h2>
+          <p>
+            The goal here is not fearmongering. It is showing a plausible progression from exposed
+            asset to operational consequence so remediation feels urgent and concrete.
+          </p>
+        </div>
+      </section>
+
       <div className="panel">
         <p className="eyebrow">Innovation layer</p>
         <h2>External exposure to internal impact</h2>

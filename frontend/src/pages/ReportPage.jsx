@@ -15,6 +15,17 @@ function ReportPage() {
 
   return (
     <section className="page">
+      <section className="hero-card page-intro">
+        <div>
+          <p className="eyebrow">Deliverable layer</p>
+          <h2>Export the story in a format leadership can act on quickly.</h2>
+          <p>
+            This final step translates the surfaced evidence, top risks, and recommended next
+            steps into a compact remediation brief.
+          </p>
+        </div>
+      </section>
+
       <div className="report-header">
         <div>
           <p className="eyebrow">Deliverable</p>

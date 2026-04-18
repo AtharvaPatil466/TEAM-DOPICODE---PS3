@@ -18,6 +18,17 @@ function OverviewPage() {
 
   return (
     <section className="page overview-page">
+      <section className="hero-card page-intro">
+        <div>
+          <p className="eyebrow">Executive dashboard</p>
+          <h2>Here’s the shortest path from exposure to action.</h2>
+          <p>
+            The overview compresses technical scan output into the handful of signals a CTO or
+            judge can absorb quickly: risk posture, urgency, and what to fix first.
+          </p>
+        </div>
+      </section>
+
       <div className="metric-grid">
         {data.summaryMetrics.map((metric) => (
           <MetricCard key={metric.label} {...metric} />

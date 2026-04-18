@@ -34,6 +34,7 @@ function SurfaceGraph({ graph, details }) {
             <p className="eyebrow">Visual map</p>
             <h2>Public attack surface</h2>
           </div>
+          <span className="chip">Click a node for context</span>
         </div>
 
         <svg viewBox="0 0 720 470" className="surface-graph" role="img" aria-label="Attack surface map">
