@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from backend.config import NVD_API_KEY
 from backend.db.models import CVECache
+from backend.intelligence import kev
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +29,9 @@ class CVERecord:
     attack_vector: str | None
     attack_complexity: str | None
     remediation: str
+    in_kev: bool = False
+    kev_ransomware: bool = False
+    kev_date_added: str | None = None
 
 
 def _key(product: str, version: str | None) -> str:
@@ -78,6 +82,9 @@ def _load_cached(db: Session, key: str) -> list[CVERecord]:
             attack_vector=r.attack_vector,
             attack_complexity=r.attack_complexity,
             remediation=r.remediation or "",
+            in_kev=bool(r.in_kev),
+            kev_ransomware=bool(r.kev_ransomware),
+            kev_date_added=r.kev_date_added,
         )
         for r in rows
     ]
@@ -93,9 +100,22 @@ def _store(db: Session, key: str, recs: list[CVERecord]) -> None:
             attack_vector=r.attack_vector,
             attack_complexity=r.attack_complexity,
             remediation=r.remediation,
+            in_kev=r.in_kev,
+            kev_ransomware=r.kev_ransomware,
+            kev_date_added=r.kev_date_added,
             cached_at=datetime.utcnow(),
         ))
     db.commit()
+
+
+def _apply_kev(rec: CVERecord) -> CVERecord:
+    info = kev.lookup(rec.cve_id)
+    if info is None:
+        return rec
+    rec.in_kev = True
+    rec.kev_ransomware = bool(info.get("kev_ransomware"))
+    rec.kev_date_added = info.get("kev_date_added")
+    return rec
 
 
 async def fetch_cves(db: Session, product: str, version: str | None) -> list[CVERecord]:
@@ -132,10 +152,11 @@ async def fetch_cves(db: Session, product: str, version: str | None) -> list[CVE
         if rec is None:
             continue
         rec.remediation = _remediation_for(product, version)
+        _apply_kev(rec)
         recs.append(rec)
 
-    # Keep top by CVSS — avoids blowing up DB with low-value entries.
-    recs.sort(key=lambda r: r.cvss_score or 0, reverse=True)
+    # Keep top by (KEV status, CVSS) — KEV-listed entries are always more operationally important.
+    recs.sort(key=lambda r: (r.in_kev, r.cvss_score or 0), reverse=True)
     recs = recs[:10]
     _store(db, key, recs)
     return recs

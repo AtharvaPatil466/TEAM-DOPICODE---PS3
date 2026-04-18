@@ -22,6 +22,8 @@ class RuleMatch:
     weight_modifier: float = 1.0
     attack_techniques: list[str] = field(default_factory=list)
     evidence: dict = field(default_factory=dict)
+    detection_probability: float = 0.5
+    compliance_controls: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -30,6 +32,8 @@ class EdgeRule:
     name: str
     description: str
     attack_techniques: list[str]
+    detection_probability: float
+    compliance_controls: list[str]
     evaluate: Callable[[Optional[Asset], Asset, dict], Optional[RuleMatch]]
 
 
@@ -238,13 +242,25 @@ def _exp_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch]
         return None
     complexity = (cve.attack_complexity or "").upper()[:1] or "?"
     matched = _matched_rce_keyword(cve)
+    kev_flag = bool(getattr(cve, "in_kev", False))
+    kev_rw = bool(getattr(cve, "kev_ransomware", False))
+    kev_suffix = ""
+    if kev_rw:
+        kev_suffix = " On CISA KEV with known ransomware campaign use."
+    elif kev_flag:
+        kev_suffix = " On CISA KEV (actively exploited in the wild)."
+    weight_modifier = 0.5
+    if kev_rw:
+        weight_modifier = 0.3
+    elif kev_flag:
+        weight_modifier = 0.35
     return RuleMatch(
         "EXP-001",
         "Remote Exploit",
         "rce_exploit",
         f"{_label(dst)} exposes {cve.cve_id} (CVSS {cve.cvss_score}, AV:N, AC:{complexity}), "
-        "making direct remote exploitation viable.",
-        weight_modifier=0.5,
+        f"making direct remote exploitation viable.{kev_suffix}",
+        weight_modifier=weight_modifier,
         attack_techniques=["T1190", "T1210"],
         evidence={
             "cve_id": cve.cve_id,
@@ -252,6 +268,9 @@ def _exp_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch]
             "attack_vector": cve.attack_vector,
             "attack_complexity": cve.attack_complexity,
             "matched_keyword": matched,
+            "in_kev": kev_flag,
+            "kev_ransomware": kev_rw,
+            "kev_date_added": getattr(cve, "kev_date_added", None),
         },
     )
 
@@ -358,37 +377,48 @@ def _data_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch
 RULES: list[EdgeRule] = [
     EdgeRule("NET-002", "Internet Reachability",
              "External asset is confirmed reachable from the public internet.",
-             ["T1595", "T1590"], _net_002),
+             ["T1595", "T1590"], 0.10,
+             ["NIST AC-17", "CIS 12.2"], _net_002),
     EdgeRule("MISC-001", "Exposed Admin Panel",
              "External asset exposes unauthenticated admin or login functionality.",
-             ["T1190", "T1133"], _misc_001),
+             ["T1190", "T1133"], 0.40,
+             ["PCI 1.2.1", "SOC2 CC6.1", "NIST AC-3"], _misc_001),
     EdgeRule("CONF-001", "Weak TLS Posture",
              "TLS certificate state weakens trust or enables interception scenarios.",
-             ["T1557", "T1040"], _conf_001),
+             ["T1557", "T1040"], 0.15,
+             ["PCI 4.1", "SOC2 CC6.7", "NIST SC-8"], _conf_001),
     EdgeRule("SUPPLY-001", "Outdated Dependency",
              "Fingerprinted software version is tied to known CVE exposure.",
-             ["T1195.002"], _supply_001),
+             ["T1195.002"], 0.20,
+             ["NIST SI-2", "PCI 6.2", "SOC2 CC7.1"], _supply_001),
     EdgeRule("CLOUD-001", "Public Bucket Exposure",
              "Cloud object storage is publicly listable and exposes stored data directly.",
-             ["T1530", "T1619"], _cloud_001),
+             ["T1530", "T1619"], 0.05,
+             ["SOC2 CC6.1", "NIST AC-3", "ISO 27001 A.9.4"], _cloud_001),
     EdgeRule("EXP-001", "Remote Exploit",
              "Service version has a high-severity network-exploitable CVE.",
-             ["T1190", "T1210"], _exp_001),
+             ["T1190", "T1210"], 0.75,
+             ["NIST SI-2", "NIST SI-4", "PCI 6.2"], _exp_001),
     EdgeRule("CRED-001", "Credential Path",
              "Login surface exists, MFA indicators are absent, and an auth-related CVE exists.",
-             ["T1078", "T1110", "T1556"], _cred_001),
+             ["T1078", "T1110", "T1556"], 0.35,
+             ["PCI 8.3.1", "SOC2 CC6.1", "NIST IA-2"], _cred_001),
     EdgeRule("EXP-002", "Privilege Escalation",
              "Target has a local privilege-escalation CVE usable after subnet foothold.",
-             ["T1068", "T1548"], _exp_002),
+             ["T1068", "T1548"], 0.65,
+             ["NIST AC-6", "NIST SI-4"], _exp_002),
     EdgeRule("NET-001", "Lateral Reachability",
              "Source and target share a /24 and there is no segmentation evidence.",
-             ["T1021", "T1570"], _net_001),
+             ["T1021", "T1570"], 0.25,
+             ["PCI 1.2", "NIST SC-7", "CIS 12.2"], _net_001),
     EdgeRule("SHADOW-001", "Shadow Device Pivot",
              "Unmanaged device on the same subnet can move laterally toward the target.",
-             ["T1200", "T1021"], _shadow_001),
+             ["T1200", "T1021"], 0.10,
+             ["NIST CM-8", "CIS 1.1", "SOC2 CC6.1"], _shadow_001),
     EdgeRule("DATA-001", "Crown Jewel Access",
              "Compromised source can reach a designated crown-jewel asset.",
-             ["T1213", "T1005", "T1041"], _data_001),
+             ["T1213", "T1005", "T1041"], 0.55,
+             ["PCI 3.4", "SOC2 CC6.1", "NIST SC-7"], _data_001),
 ]
 
 RULES_BY_ID: dict[str, EdgeRule] = {rule.id: rule for rule in RULES}

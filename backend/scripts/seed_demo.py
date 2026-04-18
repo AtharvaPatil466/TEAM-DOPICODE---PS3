@@ -31,6 +31,8 @@ def _add_cve(
     vector="NETWORK",
     complexity="LOW",
 ):
+    from backend.intelligence import kev as kev_mod
+    kev_info = kev_mod.lookup(cve_id) or {}
     db.add(CVE(
         asset_id=asset.id,
         cve_id=cve_id,
@@ -39,6 +41,9 @@ def _add_cve(
         remediation=remediation,
         attack_vector=vector,
         attack_complexity=complexity,
+        in_kev=bool(kev_info.get("in_kev")),
+        kev_ransomware=bool(kev_info.get("kev_ransomware")),
+        kev_date_added=kev_info.get("kev_date_added"),
     ))
 
 

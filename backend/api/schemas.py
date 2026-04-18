@@ -46,6 +46,9 @@ class CVEOut(BaseModel):
     attack_vector: Optional[str] = None
     attack_complexity: Optional[str] = None
     remediation: Optional[str] = None
+    in_kev: bool = False
+    kev_ransomware: bool = False
+    kev_date_added: Optional[str] = None
 
 
 class AssetSummary(BaseModel):

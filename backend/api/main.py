@@ -158,7 +158,9 @@ def asset_detail(asset_id: int, db: Session = Depends(get_db)) -> schemas.AssetD
                                version=p.service_version, state=p.state) for p in a.ports],
         cves=[schemas.CVEOut(cve_id=c.cve_id, description=c.description, cvss=c.cvss_score,
                              attack_vector=c.attack_vector, attack_complexity=c.attack_complexity,
-                             remediation=c.remediation) for c in a.cves],
+                             remediation=c.remediation, in_kev=bool(c.in_kev),
+                             kev_ransomware=bool(c.kev_ransomware),
+                             kev_date_added=c.kev_date_added) for c in a.cves],
         graph_position=None,
     )
 

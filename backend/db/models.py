@@ -69,6 +69,9 @@ class CVE(Base):
     attack_vector = Column(String, nullable=True)      # NVD AV:N / AV:L / AV:A / AV:P
     attack_complexity = Column(String, nullable=True)  # NVD AC:L / AC:H
     remediation = Column(Text, nullable=True)
+    in_kev = Column(Boolean, default=False)             # CISA Known Exploited Vulnerabilities
+    kev_ransomware = Column(Boolean, default=False)     # actively exploited in ransomware campaigns
+    kev_date_added = Column(String, nullable=True)      # YYYY-MM-DD as published by CISA
     cached_at = Column(DateTime, default=datetime.utcnow)
 
     asset = relationship("Asset", back_populates="cves")
@@ -85,6 +88,9 @@ class CVECache(Base):
     attack_vector = Column(String, nullable=True)
     attack_complexity = Column(String, nullable=True)
     remediation = Column(Text, nullable=True)
+    in_kev = Column(Boolean, default=False)
+    kev_ransomware = Column(Boolean, default=False)
+    kev_date_added = Column(String, nullable=True)
     cached_at = Column(DateTime, default=datetime.utcnow)
 
 
