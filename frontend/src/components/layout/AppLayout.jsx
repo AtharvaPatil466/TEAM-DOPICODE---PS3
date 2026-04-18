@@ -30,7 +30,7 @@ function AppLayout() {
         <div className="sidebar-top">
           <div>
             <p className="eyebrow">PS3 Frontend</p>
-            <h1>Atlas Surface Mapper</h1>
+            <h1>ShadowTrace</h1>
           </div>
           <p className="sidebar-copy">
             Public attack surface intelligence for a CTO who needs action, not noisy scan logs.
