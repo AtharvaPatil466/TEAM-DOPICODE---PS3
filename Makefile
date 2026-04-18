@@ -9,7 +9,7 @@ PORT ?= 8000
 help:
 	@echo "ShadowTrace backend targets:"
 	@echo "  make install     Create Python 3.12 venv + install backend deps"
-	@echo "  make lab-up      Start the 4-container demo lab"
+	@echo "  make lab-up      Start the 6-container demo lab"
 	@echo "  make lab-down    Stop + remove the lab"
 	@echo "  make run         Start the FastAPI server on $(HOST):$(PORT)"
 	@echo "  make seed        Seed an offline demo scan into the DB"

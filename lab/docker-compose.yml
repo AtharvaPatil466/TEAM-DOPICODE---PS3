@@ -1,9 +1,11 @@
 version: "3.8"
 
-# ShadowTrace demo lab. Four containers on a private subnet.
-# Entry point = outdated Apache (172.28.0.10).
-# Crown jewel = MySQL (172.28.0.20).
-# IoT sim = 172.28.0.30. Rogue laptop = 172.28.0.40.
+# ShadowTrace demo lab. Six containers on a private subnet.
+# Entry point  = outdated Apache (172.28.0.10).
+# Crown jewel  = MySQL          (172.28.0.20).
+# IoT sim      = 172.28.0.30. Rogue laptop = 172.28.0.40.
+# Cache        = Redis (no-auth) 172.28.0.50.
+# API pivot    = Flask           172.28.0.60 (holds DB creds in env).
 
 networks:
   shadowlab:
@@ -16,7 +18,9 @@ services:
   apache-legacy:
     # Pinned to a version with known CVEs (CVE-2021-41773 path traversal etc.).
     image: httpd:2.4.49
+    platform: linux/amd64
     container_name: shadowlab-apache
+    hostname: shadowlab-apache
     networks:
       shadowlab:
         ipv4_address: 172.28.0.10
@@ -27,22 +31,23 @@ services:
 
   mysql-crown:
     image: mysql:5.7
+    platform: linux/amd64
     container_name: shadowlab-mysql
+    hostname: shadowlab-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: crownjewel
+      MYSQL_ROOT_PASSWORD: shadowlab_root_2024
       MYSQL_DATABASE: corpdata
       MYSQL_USER: app
       MYSQL_PASSWORD: app
     networks:
       shadowlab:
         ipv4_address: 172.28.0.20
-    ports:
-      - "3306:3306"
 
   iot-device:
     # Busybox web + telnet on a minimal alpine — simulates insecure IoT.
     image: alpine:3.18
     container_name: shadowlab-iot
+    hostname: shadowlab-iot
     command: >
       sh -c "apk add --no-cache busybox-extras &&
              echo 'Smart Thermostat v1.0 - admin panel' > /tmp/index.html &&
@@ -55,6 +60,7 @@ services:
     # Simulates an unauthorized personal laptop — random ports, odd fingerprint.
     image: alpine:3.18
     container_name: shadowlab-rogue
+    hostname: shadowlab-rogue
     command: >
       sh -c "apk add --no-cache openssh netcat-openbsd &&
              ssh-keygen -A &&
@@ -63,3 +69,44 @@ services:
     networks:
       shadowlab:
         ipv4_address: 172.28.0.40
+
+  redis-cache:
+    # Pre-ACL Redis, listens on all interfaces with no password.
+    # Triggers CRED-style rules and enables the Apache→Redis→MySQL chain.
+    image: redis:5.0.5
+    platform: linux/amd64
+    container_name: shadowlab-redis
+    hostname: shadowlab-redis
+    command: ["redis-server", "--bind", "0.0.0.0", "--protected-mode", "no"]
+    networks:
+      shadowlab:
+        ipv4_address: 172.28.0.50
+
+  api-server:
+    # Hand-rolled Flask stub. Holds the MySQL root password in a plaintext env
+    # var so the scanner can surface it and the lab validator has a real
+    # artifact to probe when CRED-001 fires.
+    image: python:3.8-slim
+    container_name: shadowlab-api
+    hostname: shadowlab-api
+    working_dir: /app
+    environment:
+      DB_HOST: shadowlab-mysql
+      DB_USER: root
+      DB_PASSWORD: shadowlab_root_2024
+      REDIS_HOST: shadowlab-redis
+      FLASK_ENV: development
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt &&
+             python app.py"
+    volumes:
+      - ./api:/app:ro
+    networks:
+      shadowlab:
+        ipv4_address: 172.28.0.60
+    ports:
+      # Host 5000 is held by macOS ControlCenter (AirPlay Receiver); expose on 5001 instead.
+      - "5001:5000"
+    depends_on:
+      - redis-cache
+      - mysql-crown

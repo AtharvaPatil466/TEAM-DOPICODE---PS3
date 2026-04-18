@@ -141,11 +141,34 @@ def path_sentence(path: dict) -> str:
     return "Internet -> " + " -> ".join(chain)
 
 
+def _category_fingerprint(
+    path: list[int],
+    edge_rules: list[str],
+    assets_by_id: dict,
+) -> tuple:
+    """Group paths by their internal-pivot signature.
+
+    Two paths are the same category when they traverse the same internal pivot
+    set with the same final rule. The external entry (which front door) does
+    not differentiate — "legacy.xyz→apache→mysql" and "admin.xyz→apache→mysql"
+    are both Category 1 (direct RCE to crown).
+    """
+    internal_pivots = tuple(
+        node for node in path[1:-1]
+        if node != INTERNET_NODE
+        and (assets_by_id.get(node) is not None)
+        and assets_by_id[node].exposure == "internal"
+    )
+    final_rule = edge_rules[-1] if edge_rules else ""
+    return (internal_pivots, final_rule)
+
+
 def build_candidate_paths(
     scan: Scan,
     g: nx.DiGraph,
-    limit: int = 3,
+    limit: int = 8,
     persona: Optional[str] = None,
+    pool_size: int = 60,
 ) -> list[dict]:
     entry, target = pick_entry_and_target(g, scan)
     if entry is None or target is None or entry == target:
@@ -155,12 +178,26 @@ def build_candidate_paths(
 
     assets_by_id = {a.id: a for a in scan.assets}
     try:
-        raw_paths = list(islice(nx.shortest_simple_paths(g, entry, target, weight="weight"), limit))
+        raw_paths = list(islice(nx.shortest_simple_paths(g, entry, target, weight="weight"), pool_size))
     except (nx.NetworkXNoPath, nx.NodeNotFound):
         return []
 
+    seen_categories: set[tuple] = set()
+    kept_paths: list[list[int]] = []
+    for path in raw_paths:
+        edge_rules = [
+            g.get_edge_data(src, dst, default={}).get("rule_id", "") for src, dst in zip(path, path[1:])
+        ]
+        fingerprint = _category_fingerprint(path, edge_rules, assets_by_id)
+        if fingerprint in seen_categories:
+            continue
+        seen_categories.add(fingerprint)
+        kept_paths.append(path)
+        if len(kept_paths) >= limit:
+            break
+
     candidates: list[dict] = []
-    for index, path in enumerate(raw_paths, start=1):
+    for index, path in enumerate(kept_paths, start=1):
         hops: list[dict] = []
         total_weight = 0.0
         total_low = 0
@@ -334,7 +371,7 @@ class PathResult:
 def rank_paths(
     scan: Scan,
     g: nx.DiGraph,
-    limit: int = 3,
+    limit: int = 8,
     persona: Optional[str] = None,
 ) -> Optional[PathResult]:
     paths = build_candidate_paths(scan, g, limit=limit, persona=persona)

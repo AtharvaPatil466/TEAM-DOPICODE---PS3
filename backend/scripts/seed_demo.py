@@ -414,6 +414,17 @@ def _seed_internal_assets(db, scan) -> list[Asset]:
         asset_type="web",
         risk_score=95.0,
         os_guess="Linux 5.x",
+        tech_stack={
+            "technologies": [
+                {"name": "Apache httpd", "category": "server", "version": "2.4.49"},
+            ],
+            "server": "Apache/2.4.49 (Unix)",
+            "internet_exposed": True,
+            "exposure_hint": "host_port_forward:8080",
+            "issue": "perimeter_rce",
+            "issue_summary": "Lab perimeter gateway. Host port 8080 is forwarded to container port 80; CVE-2021-41773 is reachable from outside the subnet.",
+            "remediation_summary": "Remove the host port forward, upgrade Apache, and place the service behind an authenticated reverse proxy.",
+        },
     )
     _add_port(db, int_apache, 80, "http", "Apache httpd 2.4.49")
     _add_cve(
@@ -453,6 +464,7 @@ def _seed_internal_assets(db, scan) -> list[Asset]:
     int_iot = _add_asset(
         db,
         scan,
+        hostname="shadowlab-iot",
         ip_address="172.28.0.30",
         exposure="internal",
         asset_type="iot",
@@ -460,6 +472,7 @@ def _seed_internal_assets(db, scan) -> list[Asset]:
         is_shadow_device=True,
     )
     _add_port(db, int_iot, 80, "http", "BusyBox httpd 1.36")
+    _add_port(db, int_iot, 23, "telnet", "BusyBox telnetd")
     assets.append(int_iot)
 
     int_rogue = _add_asset(
@@ -483,11 +496,74 @@ def _seed_internal_assets(db, scan) -> list[Asset]:
         ip_address="172.28.0.50",
         exposure="internal",
         asset_type="db",
-        risk_score=75.0,
+        risk_score=82.0,
         os_guess="Linux 5.x",
+        tech_stack={
+            "technologies": [
+                {"name": "Redis", "category": "cache", "version": "5.0.5"},
+            ],
+            "issue": "no_auth",
+            "issue_summary": "Redis is bound to all interfaces with protected-mode disabled and no requirepass set; session tokens stored by the API server are readable by anyone on the subnet.",
+            "remediation_summary": "Enable requirepass, restrict bind to the API subnet, and upgrade Redis to a supported 7.x release.",
+        },
     )
-    _add_port(db, int_redis, 6379, "redis", "Redis 6.0")
+    _add_port(db, int_redis, 6379, "redis", "Redis 5.0.5")
+    _add_cve(
+        db,
+        int_redis,
+        "CVE-2022-0543",
+        10.0,
+        "Debian-specific Lua sandbox escape in Redis allows remote code execution on unauthenticated instances.",
+        "Upgrade Redis to a patched release and require authentication on all listeners.",
+    )
     assets.append(int_redis)
+
+    int_api = _add_asset(
+        db,
+        scan,
+        hostname="shadowlab-api",
+        ip_address="172.28.0.60",
+        exposure="internal",
+        asset_type="api",
+        risk_score=86.0,
+        os_guess="Linux 5.x (Python 3.8)",
+        tech_stack={
+            "technologies": [
+                {"name": "Flask", "category": "framework", "version": "2.0.1"},
+                {"name": "Werkzeug", "category": "framework", "version": "2.0.1"},
+                {"name": "Python", "category": "language", "version": "3.8"},
+            ],
+            "server": "Werkzeug/2.0.1",
+            "issue": "plaintext_db_credential",
+            "issue_summary": "The API container exposes DB_PASSWORD=shadowlab_root_2024 as a plaintext environment variable; /config leaks the DB host and user.",
+            "remediation_summary": "Move DB credentials to a secrets manager, remove verbose /config introspection, and upgrade Werkzeug.",
+            "leaked_credentials": [
+                {"service": "mysql", "user": "root", "target": "shadowlab-mysql"},
+            ],
+        },
+        admin_panels=[
+            {"path": "/config", "status": 200, "auth": False},
+            {"path": "/login", "status": 200, "auth": False},
+        ],
+    )
+    _add_port(db, int_api, 5000, "http", "Werkzeug 2.0.1 (Flask 2.0.1)")
+    _add_cve(
+        db,
+        int_api,
+        "CVE-2023-25577",
+        7.5,
+        "Werkzeug before 2.2.3 allows resource exhaustion via crafted multipart form data.",
+        "Upgrade Werkzeug to 2.2.3 or later.",
+    )
+    _add_cve(
+        db,
+        int_api,
+        "CVE-2023-30861",
+        7.5,
+        "Flask session cookie caching flaw can expose session data to unintended clients when responses are proxied.",
+        "Upgrade Flask to 2.2.5 or later and set Vary: Cookie on cached responses.",
+    )
+    assets.append(int_api)
 
     return assets
 

@@ -6,7 +6,7 @@ from ipaddress import ip_address, ip_network
 
 from sqlalchemy.orm import Session
 
-from backend.config import LAB_CROWN_JEWEL
+from backend.config import LAB_CROWN_JEWEL, LAB_ENTRY_HOST
 from backend.db import SessionLocal
 from backend.db.models import Asset, CVE, Port, Scan
 from backend.api.events import bus
@@ -195,6 +195,16 @@ async def _internal_phase(db: Session, scan: Scan) -> list[Asset]:
             continue
 
         is_crown = is_crown_in_range and ip == crown_ip
+        is_gateway = ip == LAB_ENTRY_HOST
+        tech_stack = None
+        if is_gateway:
+            tech_stack = {
+                "internet_exposed": True,
+                "exposure_hint": f"lab_entry_host:{LAB_ENTRY_HOST}",
+                "issue": "perimeter_rce",
+                "issue_summary": f"{ip} is the configured lab perimeter gateway and was reachable from the scanner host.",
+                "remediation_summary": "Restrict inbound access, patch the exposed service, and place it behind an authenticated reverse proxy.",
+            }
         asset = Asset(
             scan_id=scan_id,
             hostname=host.hostname,
@@ -203,6 +213,7 @@ async def _internal_phase(db: Session, scan: Scan) -> list[Asset]:
             os_guess=host.os_guess,
             exposure="internal",
             is_crown_jewel=is_crown,
+            tech_stack=tech_stack,
             risk_score=0.0,
         )
         db.add(asset)
@@ -211,12 +222,16 @@ async def _internal_phase(db: Session, scan: Scan) -> list[Asset]:
         for p in host.ports:
             if p.get("state") != "open":
                 continue
+            service = p.get("service")
+            version = p.get("version")
+            if service == "redis" and not version:
+                version = await asyncio.to_thread(_probe_redis_version, ip, p["port"])
             db.add(Port(
                 asset_id=asset.id,
                 port_number=p["port"],
                 protocol=p.get("protocol", "tcp"),
-                service_name=p.get("service"),
-                service_version=p.get("version"),
+                service_name=service,
+                service_version=version,
                 state=p.get("state", "open"),
             ))
             await bus.publish("port_open", {
@@ -252,6 +267,32 @@ async def _internal_phase(db: Session, scan: Scan) -> list[Asset]:
             "risk_score": asset.risk_score,
         }, scan_id)
     return assets
+
+
+def _probe_redis_version(ip: str, port: int = 6379, timeout: float = 1.5) -> str | None:
+    """nmap's -sV often misses Redis versions; the INFO command returns one line
+    with redis_version:X.Y.Z which we read directly."""
+    import socket
+    try:
+        with socket.create_connection((ip, port), timeout=timeout) as sock:
+            sock.sendall(b"*1\r\n$4\r\nINFO\r\n")
+            sock.settimeout(timeout)
+            buf = b""
+            while b"redis_version:" not in buf and len(buf) < 4096:
+                chunk = sock.recv(2048)
+                if not chunk:
+                    break
+                buf += chunk
+    except OSError:
+        return None
+    marker = b"redis_version:"
+    idx = buf.find(marker)
+    if idx < 0:
+        return None
+    end = buf.find(b"\r\n", idx)
+    if end < 0:
+        return None
+    return buf[idx + len(marker):end].decode("ascii", errors="ignore").strip() or None
 
 
 def _infer_asset_type(ports: list[dict], os_guess: str | None) -> str:

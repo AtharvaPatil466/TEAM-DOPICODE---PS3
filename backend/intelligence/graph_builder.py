@@ -44,7 +44,9 @@ def _subnet_of(asset: Asset) -> str:
 
 def _should_consider_pair(src: Optional[Asset], dst: Asset) -> bool:
     if src is None:
-        return dst.exposure == "external"
+        if dst.exposure == "external":
+            return True
+        return bool((dst.tech_stack or {}).get("internet_exposed"))
     if src.id == dst.id or dst.exposure != "internal":
         return False
     return bool(dst.ports or dst.cves or dst.admin_panels or dst.is_crown_jewel)

@@ -83,6 +83,30 @@ def _remote_exploit_cve(asset: Asset) -> Optional[CVE]:
     return best or _strongest_cve(asset, min_cvss=8.0, vector="NETWORK")
 
 
+def _is_internet_gateway(asset: Asset) -> bool:
+    tech = asset.tech_stack or {}
+    return bool(tech.get("internet_exposed"))
+
+
+def _edge_reachable(src: Optional[Asset], dst: Asset, ctx: dict) -> bool:
+    """Topology gate for rules that would otherwise fire on any (src, dst) pair.
+
+    - src=None (Internet)        → external asset, or internal gateway.
+    - src external               → internal-only reachable via a gateway dst.
+    - src internal               → must share a subnet with dst (lateral).
+    - src internal, dst external → never (no reverse-pivot modeled).
+    """
+    if src is None:
+        if dst.exposure == "external":
+            return True
+        return _is_internet_gateway(dst)
+    if src.exposure == "external":
+        return dst.exposure == "internal" and _is_internet_gateway(dst)
+    if dst.exposure == "external":
+        return False
+    return ctx["same_subnet"](src, dst)
+
+
 def _matched_rce_keyword(cve: CVE) -> Optional[str]:
     desc = (cve.description or "").lower()
     for keyword in _RCE_KEYWORDS:
@@ -130,7 +154,9 @@ def _has_mfa_signal(asset: Asset) -> Optional[str]:
 
 
 def _net_002(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch]:
-    if src is not None or dst.exposure != "external":
+    if src is not None:
+        return None
+    if dst.exposure != "external" and not _is_internet_gateway(dst):
         return None
     surfaces = []
     if dst.tech_stack:
@@ -237,6 +263,8 @@ def _cloud_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatc
 
 
 def _exp_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch]:
+    if not _edge_reachable(src, dst, ctx):
+        return None
     cve = _remote_exploit_cve(dst)
     if cve is None:
         return None
@@ -276,6 +304,8 @@ def _exp_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch]
 
 
 def _cred_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch]:
+    if not _edge_reachable(src, dst, ctx):
+        return None
     login_paths = _login_panel_paths(dst)
     if not login_paths:
         return None

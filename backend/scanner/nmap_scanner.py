@@ -1,10 +1,23 @@
 """python-nmap wrapper. Synchronous — run via asyncio.to_thread from callers."""
 import logging
+import os
 from dataclasses import dataclass, field
 
 import nmap  # python-nmap
 
 log = logging.getLogger(__name__)
+
+
+def _is_root() -> bool:
+    try:
+        return os.geteuid() == 0
+    except AttributeError:
+        return False
+
+
+# OS fingerprinting (-O) needs raw sockets. Without root, nmap aborts the entire
+# scan. Drop the flag when unprivileged so the service/version pass still runs.
+_OS_FLAG = "-O " if _is_root() else ""
 
 
 @dataclass
@@ -30,11 +43,11 @@ def discover_hosts(subnet: str) -> list[str]:
     return [h for h in nm.all_hosts() if nm[h].state() == "up"]
 
 
-def scan_host(ip: str, ports: str = "1-1024,3306,5432,6379,8080,8443,9200,27017") -> NmapHost:
+def scan_host(ip: str, ports: str = "1-1024,3306,5000,5432,6379,8080,8443,9200,27017") -> NmapHost:
     """Port scan + service/version detection + OS fingerprint for a single host."""
     nm = nmap.PortScanner()
     # -sV service version, -O OS detect, -T4 speed, --host-timeout bounded
-    nm.scan(hosts=ip, ports=ports, arguments="-sV -O -T4 --host-timeout 120s")
+    nm.scan(hosts=ip, ports=ports, arguments=f"-sV {_OS_FLAG}-T4 --host-timeout 120s")
     if ip not in nm.all_hosts():
         return NmapHost(ip=ip, state="down")
     data = nm[ip]
