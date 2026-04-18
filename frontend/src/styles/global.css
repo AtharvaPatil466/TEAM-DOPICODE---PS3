@@ -565,8 +565,12 @@ select {
 }
 
 .graph-node {
-  cursor: pointer;
+  cursor: grab;
   transition: opacity 0.2s ease;
+}
+
+.graph-node.dragging {
+  cursor: grabbing;
 }
 
 .graph-node text {
