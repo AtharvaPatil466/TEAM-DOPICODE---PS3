@@ -1,0 +1,65 @@
+version: "3.8"
+
+# ShadowTrace demo lab. Four containers on a private subnet.
+# Entry point = outdated Apache (172.28.0.10).
+# Crown jewel = MySQL (172.28.0.20).
+# IoT sim = 172.28.0.30. Rogue laptop = 172.28.0.40.
+
+networks:
+  shadowlab:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+
+services:
+  apache-legacy:
+    # Pinned to a version with known CVEs (CVE-2021-41773 path traversal etc.).
+    image: httpd:2.4.49
+    container_name: shadowlab-apache
+    networks:
+      shadowlab:
+        ipv4_address: 172.28.0.10
+    ports:
+      - "8080:80"
+    volumes:
+      - ./apache/httpd.conf:/usr/local/apache2/conf/httpd.conf:ro
+
+  mysql-crown:
+    image: mysql:5.7
+    container_name: shadowlab-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: crownjewel
+      MYSQL_DATABASE: corpdata
+      MYSQL_USER: app
+      MYSQL_PASSWORD: app
+    networks:
+      shadowlab:
+        ipv4_address: 172.28.0.20
+    ports:
+      - "3306:3306"
+
+  iot-device:
+    # Busybox web + telnet on a minimal alpine — simulates insecure IoT.
+    image: alpine:3.18
+    container_name: shadowlab-iot
+    command: >
+      sh -c "apk add --no-cache busybox-extras &&
+             echo 'Smart Thermostat v1.0 - admin panel' > /tmp/index.html &&
+             httpd -f -p 80 -h /tmp"
+    networks:
+      shadowlab:
+        ipv4_address: 172.28.0.30
+
+  rogue-laptop:
+    # Simulates an unauthorized personal laptop — random ports, odd fingerprint.
+    image: alpine:3.18
+    container_name: shadowlab-rogue
+    command: >
+      sh -c "apk add --no-cache openssh netcat-openbsd &&
+             ssh-keygen -A &&
+             echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config &&
+             /usr/sbin/sshd -D"
+    networks:
+      shadowlab:
+        ipv4_address: 172.28.0.40
