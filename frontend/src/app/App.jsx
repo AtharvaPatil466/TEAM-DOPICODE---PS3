@@ -1,0 +1,24 @@
+import { Navigate, Route, Routes } from "react-router-dom";
+import AppLayout from "../components/layout/AppLayout";
+import KillChainPage from "../pages/KillChainPage";
+import OverviewPage from "../pages/OverviewPage";
+import ReportPage from "../pages/ReportPage";
+import ScanPage from "../pages/ScanPage";
+import SurfaceMapPage from "../pages/SurfaceMapPage";
+
+function App() {
+  return (
+    <Routes>
+      <Route element={<AppLayout />}>
+        <Route path="/" element={<ScanPage />} />
+        <Route path="/overview" element={<OverviewPage />} />
+        <Route path="/surface-map" element={<SurfaceMapPage />} />
+        <Route path="/kill-chain" element={<KillChainPage />} />
+        <Route path="/report" element={<ReportPage />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
+export default App;
