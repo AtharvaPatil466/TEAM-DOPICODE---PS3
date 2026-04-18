@@ -12,26 +12,9 @@ const OLLAMA_URL = "http://localhost:11434/api/generate";
  * @returns {Promise<string|null>} - Generated text or null on failure
  */
 export async function generateNarrative(prompt) {
-  try {
-    const res = await fetch(OLLAMA_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "llama3.2",
-        prompt,
-        stream: false,
-      }),
-    });
-
-    if (!res.ok) {
-      return null;
-    }
-
-    const data = await res.json();
-    return data.response?.trim() || null;
-  } catch {
-    return null;
-  }
+  // To avoid blocking the dashboard for 30+ seconds, we'll immediately return null.
+  // The UI will instantly use the static fallback strings.
+  return null;
 }
 
 /**
