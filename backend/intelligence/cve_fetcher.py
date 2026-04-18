@@ -26,6 +26,7 @@ class CVERecord:
     description: str
     cvss_score: float | None
     attack_vector: str | None
+    attack_complexity: str | None
     remediation: str
 
 
@@ -49,17 +50,20 @@ def _parse_nvd_item(item: dict) -> CVERecord | None:
     metrics = cve.get("metrics", {})
     score = None
     vector = None
+    complexity = None
     for key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
         if key in metrics and metrics[key]:
             data = metrics[key][0].get("cvssData", {})
             score = data.get("baseScore")
             vector = data.get("attackVector") or data.get("accessVector")
+            complexity = data.get("attackComplexity") or data.get("accessComplexity")
             break
     return CVERecord(
         cve_id=cve_id,
         description=description,
         cvss_score=float(score) if score is not None else None,
         attack_vector=vector,
+        attack_complexity=complexity,
         remediation="",
     )
 
@@ -72,6 +76,7 @@ def _load_cached(db: Session, key: str) -> list[CVERecord]:
             description=r.description or "",
             cvss_score=r.cvss_score,
             attack_vector=r.attack_vector,
+            attack_complexity=r.attack_complexity,
             remediation=r.remediation or "",
         )
         for r in rows
@@ -86,6 +91,7 @@ def _store(db: Session, key: str, recs: list[CVERecord]) -> None:
             description=r.description,
             cvss_score=r.cvss_score,
             attack_vector=r.attack_vector,
+            attack_complexity=r.attack_complexity,
             remediation=r.remediation,
             cached_at=datetime.utcnow(),
         ))

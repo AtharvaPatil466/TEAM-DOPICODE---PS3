@@ -36,7 +36,7 @@ def _pick_entry_and_target(g: nx.DiGraph, scan: Scan) -> tuple[int | None, int |
     return entry, target
 
 
-def _narrate(scan: Scan, path: list[int]) -> str:
+def _narrate(scan: Scan, g: nx.DiGraph, path: list[int]) -> str:
     by_id = {a.id: a for a in scan.assets}
     hops: list[str] = []
     for i, aid in enumerate(path):
@@ -50,7 +50,18 @@ def _narrate(scan: Scan, path: list[int]) -> str:
         top_cve = max(a.cves, key=lambda c: c.cvss_score or 0, default=None)
         vuln = f" via {top_cve.cve_id} (CVSS {top_cve.cvss_score})" if top_cve else ""
         role = "crown jewel" if a.is_crown_jewel else a.asset_type or "asset"
-        hops.append(f"Step {len(hops) + 1}: Compromise {label} ({role}){vuln}.")
+        prev = path[i - 1] if i > 0 else None
+        edge = g.get_edge_data(prev, aid, default={}) if prev is not None else {}
+        rule_id = edge.get("rule_id")
+        relationship = edge.get("relationship")
+        if prev == INTERNET_NODE:
+            action = "Initial access"
+        elif a.is_crown_jewel:
+            action = "Objective"
+        else:
+            action = "Pivot"
+        rule_hint = f" using {rule_id}" if rule_id else (f" using {relationship}" if relationship else "")
+        hops.append(f"Step {len(hops) + 1}: {action} to {label} ({role}){rule_hint}{vuln}.")
     return " ".join(hops)
 
 
@@ -67,7 +78,7 @@ def compute_attack_path(db: Session, scan: Scan, g: nx.DiGraph) -> PathResult | 
 
     by_id = {a.id: a for a in scan.assets}
     total_risk = sum((by_id[aid].risk_score or 0.0) for aid in path if aid in by_id)
-    narrative = _narrate(scan, path)
+    narrative = _narrate(scan, g, path)
 
     result = PathResult(asset_ids=path, total_risk=round(total_risk, 1), narrative=narrative)
 
