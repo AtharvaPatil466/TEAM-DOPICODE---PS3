@@ -81,33 +81,30 @@ def _chain_payload_with_impact(scan: Scan, paths: list[dict], remediations: list
     return payload
 
 
-def _fallback_assessment(paths: list[dict], remediations: list[dict]) -> str:
+def _fallback_assessment(paths: list[dict], remediations: list[dict], domain: str) -> str:
+    company = domain.split('.')[0].capitalize()
     if not paths:
         return (
-            "Most likely path: No end-to-end attack path could be computed from the current graph evidence.\n\n"
-            "Time to breach: A breach-time estimate is not defensible until a complete path from public entry "
-            "to target is present.\n\n"
-            "Highest-leverage remediation: Close the highest-risk internet-facing exposure first, then recompute "
-            "the graph to confirm the crown-jewel path is broken."
+            f"Dear {company}, here is what we found.\\n\\n"
+            "Right now, we haven't identified a direct path for attackers to reach your critical data. "
+            "Continue to monitor your systems and keep public-facing services updated.\\n\\n"
+            "We found no immediate critical security gaps. "
+            "As a next step, ensure you are frequently reviewing your exposed areas."
         )
 
-    primary = paths[0]
-    slowest_hop = max(primary["hops"], key=lambda hop: hop["estimated_minutes_high"])
-    best_fix = remediations[0] if remediations else None
-    remediation_line = (
-        f"{best_fix['summary']} This action cuts {best_fix['blocks_paths']} of {len(paths)} modeled path(s)."
-        if best_fix
-        else "Patch the first externally reachable hop in the path and recompute the graph."
-    )
-    return (
-        f"Most likely path: {path_sentence(primary)}. This route has the lowest effective resistance in the graph "
-        f"and strings together the cleanest exploit path into the highest-impact objective in scope.\n\n"
-        f"Time to breach: A realistic operator could move from initial access to impact in "
-        f"{primary['estimated_window']}. The slowest step is {slowest_hop['target_label']} under "
-        f"{slowest_hop.get('rule_id') or slowest_hop.get('relationship')} because its exploit window alone is "
-        f"{slowest_hop['estimated_window']}.\n\n"
-        f"Highest-leverage remediation: {remediation_line}"
-    )
+    lines = [f"Dear {company}, here is what we found.\\n\\n"]
+    for i, path in enumerate(paths[:3]):
+        primary = path["hops"][-1]
+        fix = remediations[i] if len(remediations) > i else remediations[0] if remediations else None
+        
+        target = primary.get('target_label', 'a critical system')
+        problem = primary.get('relationship', 'an exposed area')
+        fix_action = fix['summary'] if fix else 'Secure this system immediately.'
+        
+        lines.append(f"We discovered {problem} that allows unauthorized access to {target}. ")
+        lines.append(f"To fix this, {fix_action.lower()}\\n\\n")
+        
+    return "".join(lines).strip()
 
 
 def _analyst_assessment(scan: Scan, paths: list[dict], remediations: list[dict], impact_report: ImpactReport | None) -> str:
@@ -128,37 +125,16 @@ def _analyst_assessment(scan: Scan, paths: list[dict], remediations: list[dict],
             client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
             
             prompt_content = (
-                "You are a threat analyst writing for technical judges. You will receive structured "
-                "attack-chain JSON. Decide which path a real attacker would take, estimate time to breach "
-                "using the CVE attack_vector and attack_complexity fields, and select the single remediation "
-                "that breaks the most modeled paths.\n\n"
-                "Return exactly three short paragraphs with these labels:\n"
-                "Most likely path:\n"
-                "Time to breach:\n"
-                "Highest-leverage remediation:\n\n"
-                "Requirements:\n"
-                "- Mention rule IDs and CVEs where they materially support the reasoning.\n"
-                "- Use direct, technical language.\n"
-                "- No bullet points.\n"
-                "- No executive-summary fluff or marketing phrasing.\n\n"
+                f"You are writing a letter to the leadership of {scan.target_domain}.\n"
+                "Format it exactly like a letter. You must open with 'Dear [Company], here is what we found.'\n"
+                "Write a maximum of 3 findings based on the JSON. Each finding must be exactly two sentences: "
+                "Sentence 1: What is wrong. Sentence 2: What to do about it.\n\n"
+                "CRITICAL RULES:\n"
+                "- Do NOT use the word 'vulnerability'. Use 'security gap' or 'exposed area' instead.\n"
+                "- Do NOT use technical jargon, CVE IDs, CVSS scores, or acronyms.\n"
+                "- Write in plain English.\n"
+                "- No bullet points, just paragraph text separated by double newlines.\n\n"
             )
-            
-            if impact_data:
-                prompt_content = (
-                    "You are a board-level risk advisor writing an executive summary based on structured "
-                    "attack-chain and impact JSON. Explain the worst-case financial outcome, propose the single "
-                    "best remediation investment, estimate the payback period/ROI ratio, and outline a 30/90/180-day "
-                    "remediation plan.\n\n"
-                    "Return exactly four short paragraphs with these labels:\n"
-                    "Worst-case outcome:\n"
-                    "Best investment:\n"
-                    "ROI Assessment:\n"
-                    "30/90/180-day plan:\n\n"
-                    "Requirements:\n"
-                    "- Provide concise executive-level insights.\n"
-                    "- Use the provided Rupee values for exposure and prevention estimation.\n"
-                    "- No bullet points.\n\n"
-                )
 
             client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
             msg = client.messages.create(
@@ -182,7 +158,7 @@ def _analyst_assessment(scan: Scan, paths: list[dict], remediations: list[dict],
                 return advisory_text
         except Exception as exc:
             log.warning("Anthropic assessment failed, using fallback: %s", exc)
-    return _fallback_assessment(paths, remediations)
+    return _fallback_assessment(paths, remediations, scan.target_domain)
 
 
 def _paragraph_text(text: str) -> str:
@@ -214,7 +190,7 @@ def build_pdf(db: Session, scan: Scan) -> bytes:
         elems.append(Paragraph(f"Internal subnet: <b>{html.escape(scan.target_subnet)}</b>", body))
     elems.append(Paragraph(f"Scan completed: {scan.end_time or scan.start_time}", body))
     elems.append(Spacer(1, 0.3 * inch))
-    elems.append(Paragraph("Threat Analyst Assessment", styles["Heading2"]))
+    elems.append(Paragraph("Executive Summary Letter", styles["Heading2"]))
     elems.append(Paragraph(_paragraph_text(analyst_assessment), body))
     elems.append(PageBreak())
 
