@@ -98,6 +98,10 @@ class GraphEdge(Base):
     weight = Column(Float, default=1.0)
     rule_id = Column(String, index=True, nullable=True)   # edge_rules.py rule that fired
     rationale = Column(Text, nullable=True)               # human-readable evidence
+    attack_techniques = Column(JSON, nullable=True)       # list[str] MITRE ATT&CK IDs
+    evidence = Column(JSON, nullable=True)                # structured predicate evidence
+    verified_at = Column(DateTime, nullable=True)         # live-probe verification timestamp
+    verification_evidence = Column(JSON, nullable=True)   # probe type + response snippet
 
     scan = relationship("Scan", back_populates="edges")
 

@@ -1,3 +1,42 @@
 {
-  "description": "API Schema Contract between Backend and Frontend"
+  "description": "API contract between ShadowTrace backend and frontend. Full OpenAPI is served at /docs when the backend runs. This file lists endpoints the frontend is expected to bind to.",
+  "base_url": "http://127.0.0.1:8000",
+  "websocket": {
+    "url": "/scan/live",
+    "event_types": [
+      "scan_started",
+      "scan_completed",
+      "progress",
+      "host_discovered",
+      "port_open",
+      "cve_found",
+      "shadow_device_detected",
+      "attack_path_computed"
+    ]
+  },
+  "personas": ["script_kiddie", "criminal", "apt"],
+  "endpoints": {
+    "GET /health": "Liveness probe.",
+    "POST /scan/start": "Kick off a scan. Body: {domain, subnet?}. Returns {scan_id, status}.",
+    "GET /scan/status/{id}": "Poll status for a scan.",
+    "GET /scan/latest": "Metadata for the most recent scan.",
+    "GET /scan/diff?before=A&after=B": "Assets/edges/paths added or removed, risk delta, time-to-breach delta.",
+    "POST /demo/replay/latest": "Replay the latest persisted scan over the WebSocket for offline demo.",
+    "GET /assets": "All assets in the latest scan.",
+    "GET /asset/{id}": "Detailed view of one asset (ports, CVEs, tech stack, admin panels, TLS).",
+    "GET /graph": "Nodes + edges for D3. Edges carry rule_id, rationale, attack_techniques, evidence, verified_at.",
+    "GET /rulebook": "Named rule catalog with MITRE ATT&CK technique tags.",
+    "GET /attack-path?persona=criminal": "Top-ranked chain with alternates, remediations, and persona-specific time-to-breach.",
+    "POST /attack-path/simulate": "Body {patched_asset_ids, patched_cve_ids, persona?}. Returns before/after plus blocked path IDs.",
+    "POST /lab/validate": "Fires safe read-only probes against lab containers; stamps verified edges with response snippet.",
+    "GET /report/pdf": "Downloadable PDF with threat-analyst assessment, attack chain, inventory, and rulebook appendix."
+  },
+  "attack_path_response": {
+    "hops[].attack_techniques": "list of MITRE ATT&CK IDs (T1190, T1078, ...)",
+    "hops[].evidence": "structured dict: matched keywords, CVE IDs, panel paths, subnet, bucket name",
+    "hops[].verified_at": "set if /lab/validate proved the hop live",
+    "alternates": "up to 2 other candidate paths with their own hops and time-to-breach",
+    "remediation_candidates": "aggregated fixes ranked by how many modeled paths they break",
+    "persona": "display label of the attacker profile used for estimates"
+  }
 }

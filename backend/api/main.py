@@ -1,8 +1,9 @@
 import asyncio
 import logging
 from datetime import datetime
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
@@ -195,6 +196,10 @@ def graph(db: Session = Depends(get_db)) -> schemas.GraphResponse:
             rule_id=e.rule_id,
             rationale=e.rationale,
             weight=e.weight,
+            attack_techniques=e.attack_techniques or [],
+            evidence=e.evidence,
+            verified_at=e.verified_at,
+            verification_evidence=e.verification_evidence,
         )
         for e in scan.edges
     ]
@@ -215,29 +220,154 @@ async def demo_replay_latest(db: Session = Depends(get_db)) -> schemas.LatestSca
     return _scan_to_response(scan)
 
 
-@app.get("/attack-path", response_model=schemas.AttackPathResponse)
-def attack_path(db: Session = Depends(get_db)) -> schemas.AttackPathResponse:
-    scan = _latest_scan(db)
-    if scan is None or not scan.paths:
+def _hop_to_schema(hop: dict, asset: Asset | None) -> schemas.AttackPathHop:
+    description = None
+    if asset is not None:
+        top = max(asset.cves, key=lambda c: c.cvss_score or 0, default=None)
+        if top is not None and top.cve_id == hop.get("cve_id"):
+            description = top.description
+    return schemas.AttackPathHop(
+        asset_id=hop["target_id"],
+        label=hop["target_label"],
+        vulnerability=hop.get("cve_id"),
+        description=description,
+        rule_id=hop.get("rule_id"),
+        rule_name=hop.get("rule_name"),
+        rationale=hop.get("rationale"),
+        relationship=hop.get("relationship"),
+        cvss=hop.get("cvss"),
+        attack_vector=hop.get("attack_vector"),
+        attack_complexity=hop.get("attack_complexity"),
+        estimated_window=hop.get("estimated_window"),
+        attack_techniques=hop.get("attack_techniques") or [],
+        evidence=hop.get("evidence"),
+        verified_at=hop.get("verified_at"),
+    )
+
+
+def _candidate_to_schema(path: dict, assets_by_id: dict[int, Asset]) -> schemas.AttackPathCandidate:
+    return schemas.AttackPathCandidate(
+        path_id=path["path_id"],
+        sequence_labels=path["sequence_labels"],
+        total_risk_score=path["total_risk_score"],
+        estimated_window=path["estimated_window"],
+        hops=[_hop_to_schema(hop, assets_by_id.get(hop["target_id"])) for hop in path["hops"]],
+    )
+
+
+def _result_to_response(result, scan: Scan) -> schemas.AttackPathResponse:
+    from backend.intelligence.attack_path import persona_spec
+    if result is None:
         return schemas.AttackPathResponse(hops=[], total_risk_score=0.0, narrative="No attack path computed yet.")
-    path = max(scan.paths, key=lambda p: p.total_risk_score)
     assets_by_id = {a.id: a for a in scan.assets}
-    hops: list[schemas.AttackPathHop] = []
-    for aid in path.asset_sequence:
-        a = assets_by_id.get(aid)
-        if a is None:
-            continue
-        top_cve = max(a.cves, key=lambda c: c.cvss_score or 0, default=None)
-        hops.append(schemas.AttackPathHop(
-            asset_id=a.id,
-            label=a.hostname or a.ip_address or f"asset-{a.id}",
-            vulnerability=top_cve.cve_id if top_cve else None,
-            description=top_cve.description if top_cve else None,
-        ))
+    primary = result.primary_path
     return schemas.AttackPathResponse(
-        hops=hops,
-        total_risk_score=path.total_risk_score,
-        narrative=path.narrative or "",
+        hops=[_hop_to_schema(hop, assets_by_id.get(hop["target_id"])) for hop in primary["hops"]],
+        total_risk_score=primary["total_risk_score"],
+        narrative=result.narrative,
+        path_id=primary["path_id"],
+        estimated_window=primary["estimated_window"],
+        persona=primary.get("persona"),
+        alternates=[_candidate_to_schema(p, assets_by_id) for p in result.alternates],
+        remediation_candidates=[
+            schemas.RemediationCandidate(
+                summary=item["summary"],
+                blocks_paths=item["blocks_paths"],
+                path_ids=item["path_ids"],
+                target_assets=item["target_assets"],
+                rule_ids=item["rule_ids"],
+                max_cvss=item["max_cvss"],
+            )
+            for item in result.remediations
+        ],
+    )
+
+
+@app.get("/attack-path", response_model=schemas.AttackPathResponse)
+def attack_path(
+    persona: Optional[schemas.Persona] = Query(None, description="Attacker persona: script_kiddie | criminal | apt"),
+    db: Session = Depends(get_db),
+) -> schemas.AttackPathResponse:
+    from backend.intelligence.attack_path import rank_paths
+    from backend.intelligence.graph_builder import build_edges, to_networkx
+
+    scan = _latest_scan(db)
+    if scan is None:
+        return schemas.AttackPathResponse(hops=[], total_risk_score=0.0, narrative="No attack path computed yet.")
+    edges = build_edges(scan)
+    graph = to_networkx(scan, edges)
+    result = rank_paths(scan, graph, persona=persona)
+    return _result_to_response(result, scan)
+
+
+@app.post("/attack-path/simulate", response_model=schemas.SimulateResponse)
+def attack_path_simulate(
+    req: schemas.SimulateRequest,
+    db: Session = Depends(get_db),
+) -> schemas.SimulateResponse:
+    from backend.intelligence.simulate import simulate_remediation
+
+    scan = _latest_scan(db)
+    if scan is None:
+        raise HTTPException(404, "no scans available")
+    delta = simulate_remediation(
+        scan,
+        req.patched_asset_ids,
+        req.patched_cve_ids,
+        persona=req.persona,
+    )
+    return schemas.SimulateResponse(
+        summary=delta.summary,
+        blocked_path_ids=delta.blocked_path_ids,
+        introduced_path_ids=delta.introduced_path_ids,
+        time_to_breach_delta_minutes=delta.time_to_breach_delta_minutes,
+        baseline=_result_to_response(delta.baseline, scan),
+        simulated=_result_to_response(delta.simulated, scan),
+    )
+
+
+@app.get("/scan/diff", response_model=schemas.ScanDiffResponse)
+def scan_diff(
+    before: int = Query(..., description="Earlier scan ID"),
+    after: int = Query(..., description="Later scan ID"),
+    db: Session = Depends(get_db),
+) -> schemas.ScanDiffResponse:
+    from backend.intelligence.diff import compute_diff
+
+    before_scan = db.get(Scan, before)
+    after_scan = db.get(Scan, after)
+    if before_scan is None or after_scan is None:
+        raise HTTPException(404, "one or both scans not found")
+    d = compute_diff(before_scan, after_scan)
+    return schemas.ScanDiffResponse(
+        before_id=d.before_id,
+        after_id=d.after_id,
+        summary=d.summary,
+        assets_added=d.assets_added,
+        assets_removed=d.assets_removed,
+        edges_added=d.edges_added,
+        edges_removed=d.edges_removed,
+        paths_broken=d.paths_broken,
+        paths_introduced=d.paths_introduced,
+        risk_delta=d.risk_delta,
+        time_to_breach_delta_minutes=d.time_to_breach_delta_minutes,
+    )
+
+
+@app.post("/lab/validate", response_model=schemas.LabValidateResponse)
+async def lab_validate(db: Session = Depends(get_db)) -> schemas.LabValidateResponse:
+    from backend.lab.validator import validate_scan
+
+    scan = _latest_scan(db)
+    if scan is None:
+        raise HTTPException(404, "no scans available")
+    results = await validate_scan(db, scan)
+    verified = sum(1 for r in results if r.get("verified"))
+    return schemas.LabValidateResponse(
+        scan_id=scan.id,
+        probes_run=len(results),
+        verified=verified,
+        results=[schemas.LabValidationResult(**r) for r in results],
     )
 
 
