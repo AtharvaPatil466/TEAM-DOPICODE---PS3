@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime
+from datetime import timezone, datetime
 
 from backend.db import SessionLocal, init_db
 from backend.db.models import Asset, CVE, Port, Scan
 from backend.intelligence.attack_path import compute_attack_path
 from backend.intelligence.graph_builder import build_edges, persist_edges, to_networkx
+from backend.intelligence.impact_simulator import compute_impact
 
 
 def _add_port(db, asset, port, service, version=None, protocol="tcp"):
@@ -475,6 +476,19 @@ def _seed_internal_assets(db, scan) -> list[Asset]:
     _add_port(db, int_rogue, 22, "ssh", "OpenSSH 9.3")
     assets.append(int_rogue)
 
+    int_redis = _add_asset(
+        db,
+        scan,
+        hostname="shadowlab-redis",
+        ip_address="172.28.0.50",
+        exposure="internal",
+        asset_type="db",
+        risk_score=75.0,
+        os_guess="Linux 5.x",
+    )
+    _add_port(db, int_redis, 6379, "redis", "Redis 6.0")
+    assets.append(int_redis)
+
     return assets
 
 
@@ -489,10 +503,13 @@ def seed(
         scan = Scan(
             target_domain=domain,
             target_subnet=subnet if include_internal else None,
+            company_size="medium",
+            industry_sector="technology",
+            processes_pii=True,
             status="completed",
             progress=100,
-            start_time=datetime.now(UTC),
-            end_time=datetime.now(UTC),
+            start_time=datetime.now(timezone.utc),
+            end_time=datetime.now(timezone.utc),
         )
         db.add(scan)
         db.commit()
@@ -515,6 +532,7 @@ def seed(
         persist_edges(db, scan, edges)
         graph = to_networkx(scan, edges)
         compute_attack_path(db, scan, graph)
+        compute_impact(db, scan)
         return scan.id
     finally:
         db.close()

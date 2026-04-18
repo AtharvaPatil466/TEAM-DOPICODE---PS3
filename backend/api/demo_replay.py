@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.api.events import bus
 from backend.db import SessionLocal
-from backend.db.models import Asset, AttackPath, Scan
+from backend.db.models import Asset, AttackPath, Scan, ImpactReport
 
 _REPLAY_LOCK = asyncio.Lock()
 _REPLAY_DELAY_SECONDS = 0.16
@@ -62,6 +62,7 @@ async def replay_scan(scan_id: int) -> bool:
                     selectinload(Scan.assets).selectinload(Asset.ports),
                     selectinload(Scan.assets).selectinload(Asset.cves),
                     selectinload(Scan.paths),
+                    selectinload(Scan.impact_reports),
                 )
                 .filter(Scan.id == scan_id)
                 .first()
@@ -177,6 +178,16 @@ async def replay_scan(scan_id: int) -> bool:
                     "asset_sequence": best_path.asset_sequence,
                     "total_risk_score": best_path.total_risk_score,
                     "narrative": best_path.narrative,
+                }, scan.id)
+                await _pause()
+
+            report = max(scan.impact_reports, key=lambda r: r.id, default=None)
+            if report is not None:
+                await bus.publish("impact_computed", {
+                    "total_exposure_min": report.total_exposure_min_inr,
+                    "total_exposure_max": report.total_exposure_max_inr,
+                    "scenario_count": len(report.scenario_matrix or []),
+                    "top_scenario": report.scenario_matrix[0]["name"] if report.scenario_matrix else "None",
                 }, scan.id)
                 await _pause()
 

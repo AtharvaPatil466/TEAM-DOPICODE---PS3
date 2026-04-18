@@ -128,6 +128,36 @@ async def _external_phase(db: Session, scan: Scan) -> list[Asset]:
             expired_cert=bool(ssl_info and ssl_info.expired),
         ))
         db.commit()
+
+    if len(live) < 5:
+        log.info("Sparse results, firing crt.sh fallback for %s", domain)
+        from backend.scanner.subdomain import _crtsh
+        crt_subs = await _crtsh(domain)
+        live_hostnames = {h.host for h in live}
+        dormant = [h for h in crt_subs if h not in live_hostnames][:15]
+        for d in dormant:
+            asset = Asset(
+                scan_id=scan_id,
+                hostname=d,
+                asset_type="internet",
+                exposure="external",
+                risk_score=0.0,
+                tech_stack={
+                    "status": "potentially_dormant",
+                    "issue_summary": "Historical asset from Certificate Transparency logs. Status unknown."
+                }
+            )
+            db.add(asset)
+            db.flush()
+            assets.append(asset)
+            await bus.publish("host_discovered", {
+                "asset_id": asset.id,
+                "hostname": d,
+                "exposure": "external",
+                "tech": ["dormant"],
+            }, scan_id)
+        db.commit()
+
     return assets
 
 
@@ -279,6 +309,19 @@ async def _graph_phase(db: Session, scan: Scan) -> None:
         }, scan.id)
 
 
+async def _impact_phase(db: Session, scan: Scan) -> None:
+    await _emit_progress(scan.id, db, scan, "impact_simulation", 97)
+    from backend.intelligence.impact_simulator import compute_impact
+    result = compute_impact(db, scan)
+    if result is not None:
+        await bus.publish("impact_computed", {
+            "total_exposure_min": result.get("total_exposure_min_inr", 0),
+            "total_exposure_max": result.get("total_exposure_max_inr", 0),
+            "scenario_count": result.get("scenario_count", 0),
+            "top_scenario": result.get("top_scenario_name", "None"),
+        }, scan.id)
+
+
 async def run_scan(scan_id: int, domain: str, subnet: str | None) -> None:
     db = SessionLocal()
     try:
@@ -289,7 +332,12 @@ async def run_scan(scan_id: int, domain: str, subnet: str | None) -> None:
         db.commit()
         await bus.publish("scan_started", {"domain": domain, "subnet": subnet}, scan_id)
 
-        external = await _external_phase(db, scan)
+        try:
+            external = await asyncio.wait_for(_external_phase(db, scan), timeout=180.0)
+        except asyncio.TimeoutError:
+            log.warning("External phase timed out for scan %d, proceeding with partial results", scan_id)
+            external = db.query(Asset).filter_by(scan_id=scan.id, exposure="external").all()
+
         internal = await _internal_phase(db, scan) if subnet else []
 
         if internal:
@@ -317,6 +365,7 @@ async def run_scan(scan_id: int, domain: str, subnet: str | None) -> None:
         db.commit()
 
         await _graph_phase(db, scan)
+        await _impact_phase(db, scan)
 
         scan.status = "completed"
         scan.progress = 100
