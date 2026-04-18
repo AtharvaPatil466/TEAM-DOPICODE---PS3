@@ -4,3 +4,9 @@ config/
 frontend/node_modules/
 frontend/dist/
 .DS_Store
+
+# AI Artifacts
+task.md
+project_deep_dive.md
+implementation_plan.md
+walkthrough.md
