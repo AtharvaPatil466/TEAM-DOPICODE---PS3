@@ -1,0 +1,322 @@
+/* ============================================================
+   ShadowTrace — Brand Design Tokens
+   Cybersecurity attack surface intelligence platform
+   Target audience: Indian CTOs / security operations teams
+   Aesthetic: flat, clinical, terminal ops-center energy
+   ============================================================ */
+
+:root {
+
+  /* ----------------------------------------------------------
+     1. COLORS
+     Base palette: deep navy + electric signal accents.
+     No gradients. No transparency layers. Flat and brutal.
+  ---------------------------------------------------------- */
+
+  /* Backgrounds */
+  --color-bg-primary:    #0D1B2A;   /* deep navy — page canvas */
+  --color-bg-secondary:  #111F30;   /* slightly lifted — cards, panels */
+  --color-bg-tertiary:   #162336;   /* headers, code blocks, input fills */
+
+  /* Borders — 1px, no radius, no shadow */
+  --color-border:        #1E3048;   /* default structural border */
+  --color-border-bright: #2B4A6F;   /* hover / focused / active border */
+
+  /* Text — white/off-white spectrum only */
+  --color-text-primary:  #F0F4F8;   /* headings, body copy */
+  --color-text-secondary:#A8BCCF;   /* supporting copy, metadata */
+  --color-text-muted:    #5C7A96;   /* timestamps, disabled, ghost labels */
+
+  /* Accent — Electric Red (danger / primary CTA) */
+  --color-accent-red:    #E63946;
+  --color-accent-red-dim:#7A1A1F;   /* 40% dimmed — hover bg, subtle fills */
+
+  /* Status accents */
+  --color-accent-green:  #2ECC71;   /* confirmed / safe / resolved */
+  --color-accent-amber:  #F39C12;   /* warning / degraded / partial */
+  --color-accent-cyan:   #00B4D8;   /* info / live feed / streaming */
+
+
+  /* ----------------------------------------------------------
+     2. TYPOGRAPHY SCALE
+     All headings: bold, tight tracking.
+     Labels: all-caps, wide tracking — ops-center readout feel.
+     Display: for the big ₹ breach cost number.
+  ---------------------------------------------------------- */
+
+  /* Label — small all-caps readout tag */
+  --text-label:          0.7rem;
+  --text-label-weight:   600;
+  --text-label-transform: uppercase;
+  --text-label-tracking: 0.12em;
+  --text-label-family:   'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+
+  /* Body copy */
+  --text-body:           0.875rem;   /* 14px */
+  --text-body-lg:        1rem;       /* 16px */
+  --text-body-weight:    400;
+  --text-body-family:    'Inter', 'DM Sans', system-ui, sans-serif;
+
+  /* Headings */
+  --text-heading-sm:     1.125rem;   /* 18px — panel titles */
+  --text-heading-md:     1.5rem;     /* 24px — section headings */
+  --text-heading-lg:     2rem;       /* 32px — page headings */
+  --text-heading-weight: 700;
+  --text-heading-tracking: -0.02em;
+  --text-heading-family: 'Inter', 'DM Sans', system-ui, sans-serif;
+
+  /* Display — the big rupee breach number */
+  --text-display:        4rem;       /* 64px */
+  --text-display-weight: 800;
+  --text-display-tracking: -0.04em;
+  --text-display-family: 'Inter', 'DM Sans', system-ui, sans-serif;
+
+
+  /* ----------------------------------------------------------
+     3. SPACING SCALE
+     Base unit: 4px. Linear scale 1–10.
+     Use exclusively — no arbitrary px values in components.
+  ---------------------------------------------------------- */
+
+  --space-1:   4px;
+  --space-2:   8px;
+  --space-3:   12px;
+  --space-4:   16px;
+  --space-5:   20px;
+  --space-6:   24px;
+  --space-7:   28px;
+  --space-8:   32px;
+  --space-9:   36px;
+  --space-10:  40px;
+
+
+  /* ----------------------------------------------------------
+     4. Z-INDEX LADDER
+     Flat stacking order — nothing should overlap unexpectedly.
+  ---------------------------------------------------------- */
+
+  --z-base:    0;
+  --z-overlay: 100;
+  --z-modal:   200;
+  --z-toast:   300;
+
+
+  /* ----------------------------------------------------------
+     5. TRANSITIONS
+     Three speeds. All ease-out — sharp entry, soft landing.
+     No spring or bounce — this is not a consumer app.
+  ---------------------------------------------------------- */
+
+  --transition-fast:  120ms ease-out;
+  --transition-base:  200ms ease-out;
+  --transition-slow:  400ms ease-out;
+
+
+  /* ----------------------------------------------------------
+     6. SEVERITY BADGE TOKENS
+     Used on CVE chips, finding badges, kill-chain hop labels.
+     Each tier has a -bg (fill) and -text (foreground) pair.
+     Backgrounds are dark muted fills — never full-saturation.
+     Text is the full accent color for legibility at 0.7rem.
+  ---------------------------------------------------------- */
+
+  /* Critical — active RCE, CVSS ≥ 9.0, CISA KEV ransomware */
+  --severity-critical-bg:   #2A0A0C;
+  --severity-critical-text: #E63946;
+
+  /* High — CVSS 7.0–8.9, active KEV, credential exposure */
+  --severity-high-bg:       #2A1A00;
+  --severity-high-text:     #F39C12;
+
+  /* Medium — CVSS 4.0–6.9, weak TLS, admin panel exposure */
+  --severity-medium-bg:     #0D1F2A;
+  --severity-medium-text:   #00B4D8;
+
+  /* Info — informational, NET-002, shadow device flagged */
+  --severity-info-bg:       #0F1A20;
+  --severity-info-text:     #5C7A96;
+
+}
+
+
+/* ============================================================
+   UTILITY CLASSES
+   Thin layer of atomic classes derived from tokens.
+   Components should use these — not raw var() calls — for
+   consistent visual output across the dashboard.
+   ============================================================ */
+
+/* --- Severity badges --- */
+.badge {
+  display:        inline-block;
+  padding:        2px var(--space-2);
+  font-size:      var(--text-label);
+  font-weight:    var(--text-label-weight);
+  font-family:    var(--text-label-family);
+  text-transform: var(--text-label-transform);
+  letter-spacing: var(--text-label-tracking);
+  border:         1px solid currentColor;
+  border-radius:  0;
+  line-height:    1.6;
+}
+
+.badge-critical {
+  background: var(--severity-critical-bg);
+  color:      var(--severity-critical-text);
+  border-color: var(--severity-critical-text);
+}
+
+.badge-high {
+  background: var(--severity-high-bg);
+  color:      var(--severity-high-text);
+  border-color: var(--severity-high-text);
+}
+
+.badge-medium {
+  background: var(--severity-medium-bg);
+  color:      var(--severity-medium-text);
+  border-color: var(--severity-medium-text);
+}
+
+.badge-info {
+  background: var(--severity-info-bg);
+  color:      var(--severity-info-text);
+  border-color: var(--severity-info-text);
+}
+
+/* --- Label readout --- */
+.label {
+  font-size:      var(--text-label);
+  font-weight:    var(--text-label-weight);
+  font-family:    var(--text-label-family);
+  text-transform: var(--text-label-transform);
+  letter-spacing: var(--text-label-tracking);
+  color:          var(--color-text-muted);
+}
+
+/* --- Display number (₹ breach cost) --- */
+.display-value {
+  font-size:      var(--text-display);
+  font-weight:    var(--text-display-weight);
+  font-family:    var(--text-display-family);
+  letter-spacing: var(--text-display-tracking);
+  color:          var(--color-text-primary);
+  line-height:    1;
+}
+
+.display-value--danger {
+  color: var(--color-accent-red);
+}
+
+/* --- Status dots --- */
+.status-dot {
+  display:       inline-block;
+  width:         6px;
+  height:        6px;
+  border-radius: 0;         /* square dot — flat, no circles */
+  background:    var(--color-text-muted);
+}
+
+.status-dot--live    { background: var(--color-accent-cyan); }
+.status-dot--safe    { background: var(--color-accent-green); }
+.status-dot--warn    { background: var(--color-accent-amber); }
+.status-dot--danger  { background: var(--color-accent-red); }
+
+/* --- CTA / Primary button --- */
+.btn-primary {
+  display:        inline-flex;
+  align-items:    center;
+  gap:            var(--space-2);
+  padding:        var(--space-2) var(--space-5);
+  background:     var(--color-accent-red);
+  color:          var(--color-text-primary);
+  font-size:      var(--text-body);
+  font-weight:    600;
+  font-family:    var(--text-body-family);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border:         1px solid var(--color-accent-red);
+  border-radius:  0;
+  cursor:         pointer;
+  transition:     background var(--transition-fast),
+                  border-color var(--transition-fast);
+}
+
+.btn-primary:hover {
+  background:   var(--color-accent-red-dim);
+  border-color: var(--color-accent-red);
+}
+
+/* --- Ghost / secondary button --- */
+.btn-ghost {
+  display:        inline-flex;
+  align-items:    center;
+  gap:            var(--space-2);
+  padding:        var(--space-2) var(--space-5);
+  background:     transparent;
+  color:          var(--color-text-secondary);
+  font-size:      var(--text-body);
+  font-weight:    600;
+  font-family:    var(--text-body-family);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border:         1px solid var(--color-border-bright);
+  border-radius:  0;
+  cursor:         pointer;
+  transition:     color var(--transition-fast),
+                  border-color var(--transition-fast);
+}
+
+.btn-ghost:hover {
+  color:        var(--color-text-primary);
+  border-color: var(--color-accent-cyan);
+}
+
+/* --- Panel / card --- */
+.panel {
+  background:   var(--color-bg-secondary);
+  border:       1px solid var(--color-border);
+  border-radius: 0;
+  padding:      var(--space-6);
+}
+
+.panel--elevated {
+  border-color: var(--color-border-bright);
+}
+
+/* --- Data table row --- */
+.table-row {
+  border-bottom: 1px solid var(--color-border);
+  transition:    background var(--transition-fast);
+}
+
+.table-row:hover {
+  background: var(--color-bg-tertiary);
+}
+
+/* --- Live feed pulse animation (for WebSocket streams) --- */
+@keyframes pulse-cyan {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+
+.live-indicator {
+  display:    inline-block;
+  width:      6px;
+  height:     6px;
+  background: var(--color-accent-cyan);
+  animation:  pulse-cyan 1.4s ease-in-out infinite;
+}
+
+/* --- Monospace terminal block --- */
+.terminal-block {
+  background:  var(--color-bg-tertiary);
+  border:      1px solid var(--color-border);
+  border-left: 3px solid var(--color-accent-cyan);
+  padding:     var(--space-4) var(--space-5);
+  font-family: var(--text-label-family);
+  font-size:   var(--text-body);
+  color:       var(--color-text-secondary);
+  white-space: pre-wrap;
+  overflow-x:  auto;
+}

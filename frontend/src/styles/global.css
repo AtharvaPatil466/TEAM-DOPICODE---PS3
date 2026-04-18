@@ -1,23 +1,23 @@
 :root {
   font-family: Inter, "Helvetica Neue", Arial, sans-serif;
   color: #ffffff;
-  background: #131313;
+  background: #0D1B2A;
   line-height: 1.5;
   font-weight: 400;
-  --panel: #171717;
-  --panel-strong: #1d1d1d;
-  --panel-border: #2b2b2b;
-  --panel-border-strong: #3a3a3a;
-  --panel-hover: #242424;
-  --muted: #b4b4bc;
-  --label: #8a8f98;
+  --panel: #111F30;
+  --panel-strong: #162336;
+  --panel-border: #1E3048;
+  --panel-border-strong: #2B4A6F;
+  --panel-hover: #162840;
+  --muted: #A8BCCF;
+  --label: #5C7A96;
   --text: #ffffff;
   --accent: #f1f1f1;
   --accent-strong: #ffffff;
-  --accent-soft: #242424;
-  --critical: #ff5d5d;
-  --high: #dde1e7;
-  --medium: #bcbcc4;
+  --accent-soft: #162840;
+  --critical: #E63946;
+  --high: #F39C12;
+  --medium: #00B4D8;
   --neutral: #f1f1f1;
 }
 
@@ -30,7 +30,7 @@ body {
   min-width: 320px;
   min-height: 100vh;
   color: var(--text);
-  background: #131313;
+  background: #0D1B2A;
 }
 
 #root {
@@ -60,7 +60,7 @@ select {
   justify-content: flex-start;
   padding: 1.5rem;
   border-right: 1px solid var(--panel-border);
-  background: #131313;
+  background: #0D1B2A;
 }
 
 .sidebar-top {
@@ -239,7 +239,7 @@ select {
   padding: 1rem;
   border: 1px solid var(--panel-border);
   border-radius: 0;
-  background: #1a1a1a;
+  background: #111F30;
 }
 
 .hero-stat span,
@@ -307,7 +307,7 @@ select {
   border: 1px solid var(--panel-border);
   border-radius: 0;
   color: var(--text);
-  background: #1b1b1b;
+  background: #111F30;
   transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
 }
 
@@ -315,7 +315,7 @@ select {
 .scan-form select:focus {
   outline: none;
   border-color: var(--accent);
-  background: #202020;
+  background: #162336;
   transform: none;
 }
 
@@ -355,7 +355,7 @@ select {
   height: 44px;
   border: 1px solid var(--panel-border);
   border-radius: 0;
-  background: #202020;
+  background: #162336;
   color: var(--accent-strong);
   font-weight: 700;
 }
@@ -393,9 +393,9 @@ select {
 }
 
 .button.primary {
-  color: #000000;
-  background: var(--accent);
-  border-color: var(--accent);
+  color: #ffffff;
+  background: #E63946;
+  border-color: #E63946;
 }
 
 .button.secondary {
@@ -446,7 +446,7 @@ select {
   margin-bottom: 1.5rem;
   border: 1px solid var(--panel-border);
   border-radius: 0;
-  background: #202020;
+  background: #162336;
 }
 
 .progress-bar {
@@ -495,7 +495,7 @@ select {
 .action-card {
   padding: 1rem;
   border-radius: 0;
-  background: #202020;
+  background: #162336;
   border: 1px solid var(--panel-border);
 }
 
@@ -523,24 +523,24 @@ select {
 .severity {
   display: inline-flex;
   padding: 0.35rem 0.7rem;
-  border-radius: 999px;
+  border-radius: 0;
   font-size: 0.85rem;
   font-weight: 600;
 }
 
 .severity-critical {
   color: #fff;
-  background: rgba(255, 93, 93, 0.9);
+  background: rgba(230, 57, 70, 0.9);
 }
 
 .severity-high {
   color: #000;
-  background: #dde1e7;
+  background: #F39C12;
 }
 
 .severity-medium {
   color: #000;
-  background: #bcbcc4;
+  background: #00B4D8;
 }
 
 .severity-neutral {
@@ -607,7 +607,7 @@ select {
   align-items: start;
   padding: 1rem;
   border-radius: 0;
-  background: #202020;
+  background: #162336;
   border: 1px solid var(--panel-border);
 }
 
@@ -618,7 +618,7 @@ select {
   width: 64px;
   height: 64px;
   border-radius: 0;
-  background: #1b1b1b;
+  background: #111F30;
   border: 1px solid var(--panel-border);
   color: var(--accent-strong);
   font-weight: 700;
@@ -641,7 +641,7 @@ select {
   margin: 0;
   padding: 0.9rem 1rem;
   border-radius: 0;
-  background: #202020;
+  background: #162336;
   border: 1px solid var(--panel-border);
 }
 
@@ -666,7 +666,7 @@ select {
   min-height: 34px;
   padding: 0.35rem 0.8rem;
   border-radius: 0;
-  background: #202020;
+  background: #162336;
   border: 1px solid var(--panel-border);
   color: var(--muted);
   font-size: 0.82rem;
@@ -674,7 +674,7 @@ select {
 
 .telemetry {
   padding: 1.5rem;
-  background: #131313;
+  background: #0D1B2A;
 }
 
 .telemetry-section {
@@ -720,11 +720,8 @@ select {
 .rupee-big {
   font-size: 3rem;
   font-weight: 700;
-  color: #ff5d5d;
+  color: #E63946;
   line-height: 1.1;
-  background: linear-gradient(135deg, #ff5d5d, #ff8c42);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
   margin: 0.5rem 0;
 }
 

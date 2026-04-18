@@ -22,9 +22,11 @@ function riskToColor(score) {
 }
 
 function SurfaceGraph({ graph, details, assetsById }) {
-  const [selectedNodeId, setSelectedNodeId] = useState(graph?.nodes?.[0]?.id ?? null);
+  const nodes = graph?.nodes || [];
+  const edges = graph?.edges || [];
+  const [selectedNodeId, setSelectedNodeId] = useState(nodes[0]?.id ?? null);
   const [heatmapMode, setHeatmapMode] = useState(false);
-  const [positions, setPositions] = useState(graph?.nodes || []);
+  const [positions, setPositions] = useState(nodes);
   const [draggingNodeId, setDraggingNodeId] = useState(null);
   const [selectedEdge, setSelectedEdge] = useState(null);
   const [edgeExplanation, setEdgeExplanation] = useState(null);
@@ -55,10 +57,9 @@ function SurfaceGraph({ graph, details, assetsById }) {
   };
 
   useEffect(() => {
-    const nodes = graph?.nodes || [];
     setPositions(nodes);
     setSelectedNodeId((current) => current ?? nodes[0]?.id ?? null);
-  }, [graph?.nodes]);
+  }, [nodes]);
 
   const selected = selectedNodeId == null ? null : details[selectedNodeId];
 
@@ -146,7 +147,7 @@ function SurfaceGraph({ graph, details, assetsById }) {
           <button
             type="button"
             className={`chip ${heatmapMode ? "chip-live" : ""}`}
-            onClick={() => setHeatmapMode((m) => !m)}
+            onClick={() => setHeatmapMode((mode) => !mode)}
             style={{ cursor: "pointer" }}
           >
             {heatmapMode ? "◉ Heatmap ON" : "○ Heatmap"}
@@ -163,7 +164,7 @@ function SurfaceGraph({ graph, details, assetsById }) {
           onPointerUp={handlePointerEnd}
           onPointerLeave={handlePointerEnd}
         >
-          {graph.edges.map((edge) => {
+          {edges.map((edge) => {
             const from = nodeMap[edge.from];
             const to = nodeMap[edge.to];
             if (!from || !to) {
@@ -214,9 +215,11 @@ function SurfaceGraph({ graph, details, assetsById }) {
                 cx={node.x}
                 cy={node.y}
                 r={selectedNodeId === node.id ? 38 : 30}
-                fill={heatmapMode
-                  ? riskToColor(assetsById?.[node.id]?.risk_score || 0)
-                  : (severityColors[node.severity] || severityColors.Neutral)}
+                fill={
+                  heatmapMode
+                    ? riskToColor(assetsById?.[node.id]?.risk_score || 0)
+                    : (severityColors[node.severity] || severityColors.Neutral)
+                }
                 opacity={selectedNodeId === node.id ? 1 : 0.88}
               />
               <text x={node.x} y={node.y + 4} textAnchor="middle">
