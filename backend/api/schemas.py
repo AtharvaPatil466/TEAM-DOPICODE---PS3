@@ -23,6 +23,12 @@ class ScanStatusResponse(BaseModel):
     end_time: Optional[datetime] = None
 
 
+class LatestScanResponse(ScanStatusResponse):
+    domain: str
+    subnet: Optional[str] = None
+    internal_scope: bool = False
+
+
 class PortOut(BaseModel):
     port: int
     protocol: str

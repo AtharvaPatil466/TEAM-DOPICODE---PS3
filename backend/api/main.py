@@ -12,8 +12,8 @@ from backend.config import LOG_LEVEL
 from backend.db import init_db, get_db
 from backend.db.models import Scan, Asset, Port, CVE, GraphEdge, AttackPath
 from backend.api import schemas
+from backend.api.demo_replay import replay_scan
 from backend.api.events import bus
-from backend.api.orchestrator import run_scan
 from backend.intelligence.edge_rules import rulebook as graph_rulebook
 
 logging.basicConfig(level=LOG_LEVEL)
@@ -41,6 +41,8 @@ def health() -> dict:
 
 @app.post("/scan/start", response_model=schemas.ScanStartResponse)
 async def scan_start(req: schemas.ScanStartRequest, db: Session = Depends(get_db)) -> schemas.ScanStartResponse:
+    from backend.api.orchestrator import run_scan
+
     scan = Scan(target_domain=req.domain, target_subnet=req.subnet, status="pending")
     db.add(scan)
     db.commit()
@@ -65,6 +67,14 @@ def scan_status(scan_id: int, db: Session = Depends(get_db)) -> schemas.ScanStat
     )
 
 
+@app.get("/scan/latest", response_model=schemas.LatestScanResponse)
+def latest_scan(db: Session = Depends(get_db)) -> schemas.LatestScanResponse:
+    scan = _latest_scan(db)
+    if scan is None:
+        raise HTTPException(404, "no scans available")
+    return _scan_to_response(scan)
+
+
 @app.websocket("/scan/live")
 async def scan_live(ws: WebSocket) -> None:
     await bus.connect(ws)
@@ -80,6 +90,21 @@ async def scan_live(ws: WebSocket) -> None:
 
 def _latest_scan(db: Session) -> Scan | None:
     return db.query(Scan).order_by(desc(Scan.id)).first()
+
+
+def _scan_to_response(scan: Scan) -> schemas.LatestScanResponse:
+    return schemas.LatestScanResponse(
+        scan_id=scan.id,
+        domain=scan.target_domain,
+        subnet=scan.target_subnet,
+        status=scan.status,
+        progress=scan.progress,
+        total_assets=scan.total_assets,
+        total_cves=scan.total_cves,
+        start_time=scan.start_time,
+        end_time=scan.end_time,
+        internal_scope=any(asset.exposure == "internal" for asset in scan.assets),
+    )
 
 
 def _risk_level(score: float) -> str:
@@ -153,6 +178,15 @@ def graph(db: Session = Depends(get_db)) -> schemas.GraphResponse:
         )
         for a in scan.assets
     ]
+    if any(edge.source_id == 0 or edge.target_id == 0 for edge in scan.edges):
+        nodes.insert(0, schemas.GraphNode(
+            id=0,
+            label="Internet",
+            risk_level="low",
+            asset_type="internet",
+            is_crown_jewel=False,
+            is_shadow_device=False,
+        ))
     edges = [
         schemas.GraphEdgeOut(
             source=e.source_id,
@@ -170,6 +204,15 @@ def graph(db: Session = Depends(get_db)) -> schemas.GraphResponse:
 @app.get("/rulebook", response_model=list[schemas.RulebookRuleOut])
 def rulebook() -> list[schemas.RulebookRuleOut]:
     return [schemas.RulebookRuleOut(**rule) for rule in graph_rulebook()]
+
+
+@app.post("/demo/replay/latest", response_model=schemas.LatestScanResponse)
+async def demo_replay_latest(db: Session = Depends(get_db)) -> schemas.LatestScanResponse:
+    scan = _latest_scan(db)
+    if scan is None:
+        raise HTTPException(404, "no scans available")
+    asyncio.create_task(replay_scan(scan.id))
+    return _scan_to_response(scan)
 
 
 @app.get("/attack-path", response_model=schemas.AttackPathResponse)

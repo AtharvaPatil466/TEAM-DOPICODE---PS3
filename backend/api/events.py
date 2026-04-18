@@ -25,6 +25,10 @@ class EventBus:
         async with self._lock:
             self._clients.discard(ws)
 
+    async def reset_history(self) -> None:
+        async with self._lock:
+            self._history = []
+
     async def publish(self, event_type: str, payload: dict[str, Any], scan_id: int | None = None) -> None:
         event = {
             "type": event_type,
