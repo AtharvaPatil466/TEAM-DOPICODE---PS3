@@ -5,8 +5,24 @@ import {
   buildHopRationalePrompt,
 } from "./llm";
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
-const WS_BASE = API_BASE.replace(/^http/, "ws");
+// API_BASE can be:
+//   - absolute ("http://host:port") for local dev hitting the backend directly
+//   - path-relative ("/api") for deployed builds that go through nginx
+//   - "" for same-origin with no prefix
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
+
+function resolveWsBase() {
+  if (/^https?:/i.test(API_BASE)) {
+    return API_BASE.replace(/^http/i, "ws");
+  }
+  if (typeof window === "undefined") {
+    return API_BASE;
+  }
+  const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${scheme}://${window.location.host}${API_BASE}`;
+}
+
+const WS_BASE = resolveWsBase();
 
 const severityOrder = {
   Critical: 0,

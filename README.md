@@ -101,14 +101,11 @@ ShadowTrace answers that question.
 │                            └──────────────────────────────┘ │
 │                         SQLite (aiosqlite)                   │
 ├─────────────────────────────────────────────────────────────┤
-│                   Docker Lab (4 containers)                  │
-│  ┌───────────┐ ┌───────────┐ ┌─────────┐ ┌──────────────┐ │
-│  │  Apache    │ │   MySQL   │ │   IoT   │ │    Rogue     │ │
-│  │  2.4.49   │ │    5.7    │ │ Device  │ │   Laptop     │ │
-│  │ 172.28.0.10│ │172.28.0.20│ │.0.30    │ │   .0.40      │ │
-│  │ CVE-2021- │ │ Crown     │ │ No Auth │ │ PermitRoot   │ │
-│  │   41773   │ │ Jewel 👑  │ │         │ │   Login      │ │
-│  └───────────┘ └───────────┘ └─────────┘ └──────────────┘ │
+│                   Docker Lab (6 containers)                  │
+│  Apache 2.4.49  MySQL 5.7   IoT busybox   Rogue SSH          │
+│  .10 (gateway)  .20 👑      .30           .40                │
+│  Redis 5.0.5    Flask API                                    │
+│  .50 (no-auth)  .60 (leaks DB creds via env)                 │
 │                   172.28.0.0/24 (shadowlab)                  │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -206,12 +203,14 @@ The project ships with a **self-contained vulnerable network** for safe, repeata
 
 | Container | IP | Role | Vulnerability |
 |-----------|-----|------|---------------|
-| `shadowlab-apache` | 172.28.0.10 | Entry Point | Apache 2.4.49 — CVE-2021-41773 (path traversal) |
+| `shadowlab-apache` | 172.28.0.10 | Internet-exposed gateway | Apache 2.4.49 — CVE-2021-41773 (path traversal → RCE) |
 | `shadowlab-mysql` | 172.28.0.20 | Crown Jewel 👑 | MySQL 5.7 with weak credentials |
-| `shadowlab-iot` | 172.28.0.30 | Shadow Device | Busybox HTTP + Telnet, zero authentication |
-| `shadowlab-rogue` | 172.28.0.40 | Rogue Laptop | OpenSSH with `PermitRootLogin yes` |
+| `shadowlab-iot` | 172.28.0.30 | Shadow Device | Busybox HTTP, zero authentication |
+| `shadowlab-rogue` | 172.28.0.40 | Rogue Laptop | OpenSSH `PermitRootLogin yes` |
+| `shadowlab-redis` | 172.28.0.50 | Unauth cache | Redis 5.0.5, `--protected-mode no`, CVE-2022-0543 |
+| `shadowlab-api` | 172.28.0.60 | API pivot | Flask 2.0.1, leaks MySQL root creds via env |
 
-The expected demo attack path: **Internet → Apache (CVE-2021-41773) → MySQL (crown jewel)**
+Six containers surface **8+ distinct attack-path categories** — EXP-001 chains through Apache, CRED-001 via the API, CLOUD-001 through Redis, SHADOW-001 via the rogue laptop, DATA-001 into MySQL, and lateral combinations of each. The graph isn't one canonical kill-chain — it's a fan of plausible routes.
 
 ```bash
 cd lab && docker compose up -d     # Start
@@ -263,6 +262,7 @@ project/
 │   ├── lab/                  # Live validation probes against lab containers
 │   ├── db/                   # SQLAlchemy models + session management
 │   ├── scripts/              # seed_demo.py — offline demo data seeder
+│   ├── tests/                # pytest rulebook suite (24 tests)
 │   └── config.py             # Environment config (.env loading)
 ├── frontend/
 │   ├── src/
@@ -274,8 +274,9 @@ project/
 ├── shared/
 │   └── api_schema.json       # API contract between backend and frontend
 ├── lab/
-│   ├── docker-compose.yml    # 4-container vulnerable network
-│   └── apache/               # Custom httpd.conf for CVE-2021-41773
+│   ├── docker-compose.yml    # 6-container vulnerable network
+│   ├── apache/               # Custom httpd.conf for CVE-2021-41773
+│   └── api/                  # Flask stub (leaky-env-vars pivot target)
 ├── infra/
 │   ├── backend.Dockerfile    # Python 3.12 + nmap, non-root, tini
 │   ├── frontend.Dockerfile   # Multi-stage: Node build → Nginx serve
@@ -309,7 +310,7 @@ LOG_LEVEL=INFO
 
 GitHub Actions pipeline runs on every push to `main` and on all PRs:
 
-1. **Backend** — Python 3.12 + nmap install → pip install → import smoke test
+1. **Backend** — Python 3.12 + nmap install → pip install → import smoke test → `pytest` rulebook suite (24 tests covering topology gate + EXP-001/NET-002/CRED-001/DATA-001/SHADOW-001)
 2. **Frontend** — Node 20 → `npm ci` → `npm run build`
 3. **Docker** — Builds both `backend.Dockerfile` and `frontend.Dockerfile` (no push)
 

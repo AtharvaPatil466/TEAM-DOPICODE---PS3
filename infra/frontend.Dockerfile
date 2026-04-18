@@ -3,6 +3,9 @@ WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend ./
+# In the containerized stack the frontend is served by nginx at :8090
+# and proxies /api/* to the backend. Match that at build time.
+ENV VITE_API_BASE_URL=/api
 RUN npm run build
 
 FROM nginx:1.27-alpine

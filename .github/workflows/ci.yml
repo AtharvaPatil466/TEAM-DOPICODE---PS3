@@ -23,6 +23,8 @@ jobs:
           pip install -r backend/requirements.txt
       - name: Import smoke test
         run: python -c "from backend.api.main import app; print(app.title)"
+      - name: Rulebook tests
+        run: python -m pytest backend/tests -v
 
   frontend:
     runs-on: ubuntu-latest
