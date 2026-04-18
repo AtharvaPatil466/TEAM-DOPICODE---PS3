@@ -29,7 +29,7 @@ from reportlab.platypus import (
 from sqlalchemy.orm import Session
 
 from backend.config import ANTHROPIC_API_KEY
-from backend.db.models import Asset, Scan
+from backend.db.models import Asset, Scan, ImpactReport
 
 from .attack_path import (
     build_candidate_paths,
@@ -75,6 +75,11 @@ def _chain_payload(scan: Scan, paths: list[dict], remediations: list[dict]) -> d
         "remediation_candidates": remediations[:5],
     }
 
+def _chain_payload_with_impact(scan: Scan, paths: list[dict], remediations: list[dict], impact: dict) -> dict:
+    payload = _chain_payload(scan, paths, remediations)
+    payload["impact_simulation"] = impact
+    return payload
+
 
 def _fallback_assessment(paths: list[dict], remediations: list[dict]) -> str:
     if not paths:
@@ -105,41 +110,78 @@ def _fallback_assessment(paths: list[dict], remediations: list[dict]) -> str:
     )
 
 
-def _analyst_assessment(scan: Scan, paths: list[dict], remediations: list[dict]) -> str:
-    payload = _chain_payload(scan, paths, remediations)
+def _analyst_assessment(scan: Scan, paths: list[dict], remediations: list[dict], impact_report: ImpactReport | None) -> str:
+    impact_data = {}
+    if impact_report:
+        impact_data = {
+            "total_exposure_min": impact_report.total_exposure_min_inr,
+            "total_exposure_max": impact_report.total_exposure_max_inr,
+            "scenarios": impact_report.scenario_matrix,
+        }
+        
+    payload = _chain_payload_with_impact(scan, paths, remediations, impact_data)
+    
     if ANTHROPIC_API_KEY and paths:
         try:
             import anthropic
 
             client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            
+            prompt_content = (
+                "You are a threat analyst writing for technical judges. You will receive structured "
+                "attack-chain JSON. Decide which path a real attacker would take, estimate time to breach "
+                "using the CVE attack_vector and attack_complexity fields, and select the single remediation "
+                "that breaks the most modeled paths.\n\n"
+                "Return exactly three short paragraphs with these labels:\n"
+                "Most likely path:\n"
+                "Time to breach:\n"
+                "Highest-leverage remediation:\n\n"
+                "Requirements:\n"
+                "- Mention rule IDs and CVEs where they materially support the reasoning.\n"
+                "- Use direct, technical language.\n"
+                "- No bullet points.\n"
+                "- No executive-summary fluff or marketing phrasing.\n\n"
+            )
+            
+            if impact_data:
+                prompt_content = (
+                    "You are a board-level risk advisor writing an executive summary based on structured "
+                    "attack-chain and impact JSON. Explain the worst-case financial outcome, propose the single "
+                    "best remediation investment, estimate the payback period/ROI ratio, and outline a 30/90/180-day "
+                    "remediation plan.\n\n"
+                    "Return exactly four short paragraphs with these labels:\n"
+                    "Worst-case outcome:\n"
+                    "Best investment:\n"
+                    "ROI Assessment:\n"
+                    "30/90/180-day plan:\n\n"
+                    "Requirements:\n"
+                    "- Provide concise executive-level insights.\n"
+                    "- Use the provided Rupee values for exposure and prevention estimation.\n"
+                    "- No bullet points.\n\n"
+                )
+
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
             msg = client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=500,
+                max_tokens=600,
                 messages=[{
                     "role": "user",
-                    "content": (
-                        "You are a threat analyst writing for technical judges. You will receive structured "
-                        "attack-chain JSON. Decide which path a real attacker would take, estimate time to breach "
-                        "using the CVE attack_vector and attack_complexity fields, and select the single remediation "
-                        "that breaks the most modeled paths.\n\n"
-                        "Return exactly three short paragraphs with these labels:\n"
-                        "Most likely path:\n"
-                        "Time to breach:\n"
-                        "Highest-leverage remediation:\n\n"
-                        "Requirements:\n"
-                        "- Mention rule IDs and CVEs where they materially support the reasoning.\n"
-                        "- Use direct, technical language.\n"
-                        "- No bullet points.\n"
-                        "- No executive-summary fluff or marketing phrasing.\n\n"
-                        f"Attack-chain JSON:\n{json.dumps(payload, indent=2)}"
-                    ),
+                    "content": prompt_content + f"Attack-chain and Impact JSON:\n{json.dumps(payload, indent=2)}",
                 }],
             )
             parts = [block.text for block in msg.content if getattr(block, "type", "") == "text"]
             if parts:
-                return "".join(parts).strip()
+                advisory_text = "".join(parts).strip()
+                if impact_report and not impact_report.executive_advisory:
+                    from backend.db import SessionLocal
+                    with SessionLocal() as session:
+                        rep = session.get(ImpactReport, impact_report.id)
+                        if rep:
+                            rep.executive_advisory = advisory_text
+                            session.commit()
+                return advisory_text
         except Exception as exc:
-            log.warning("Anthropic attack-chain assessment failed, using fallback: %s", exc)
+            log.warning("Anthropic assessment failed, using fallback: %s", exc)
     return _fallback_assessment(paths, remediations)
 
 
@@ -154,7 +196,9 @@ def build_pdf(db: Session, scan: Scan) -> bytes:
     graph = to_networkx(scan, edges)
     candidate_paths = build_candidate_paths(scan, graph)
     remediation_candidates = build_remediation_candidates(candidate_paths)
-    analyst_assessment = _analyst_assessment(scan, candidate_paths, remediation_candidates)
+    impact_report = max(scan.impact_reports, key=lambda r: r.id, default=None)
+    
+    analyst_assessment = impact_report.executive_advisory if impact_report and impact_report.executive_advisory else _analyst_assessment(scan, candidate_paths, remediation_candidates, impact_report)
     primary_path = candidate_paths[0] if candidate_paths else None
 
     buf = io.BytesIO()
@@ -255,6 +299,54 @@ def build_pdf(db: Session, scan: Scan) -> bytes:
             )
             elems.append(Paragraph(_paragraph_text(evidence), body))
     elems.append(PageBreak())
+    
+    if impact_report:
+        elems.append(Paragraph("Breach Impact Assessment", styles["Heading2"]))
+        elems.append(Paragraph(
+            f"Estimated total regulatory and operational exposure: <b>₹{impact_report.total_exposure_min_inr:,.0f} - ₹{impact_report.total_exposure_max_inr:,.0f}</b>",
+            body
+        ))
+        elems.append(Spacer(1, 0.15 * inch))
+        
+        elems.append(Paragraph("Operational Loss Breakdown", styles["Heading3"]))
+        op_rows = [
+            ["Category", "Min Range (₹)", "Max Range (₹)"],
+            ["Downtime", f"{impact_report.downtime_cost_min_inr:,.0f}", f"{impact_report.downtime_cost_max_inr:,.0f}"],
+            ["Incident Response", f"{impact_report.incident_response_min_inr:,.0f}", f"{impact_report.incident_response_max_inr:,.0f}"],
+            ["Customer Churn", f"{impact_report.churn_cost_min_inr:,.0f}", f"{impact_report.churn_cost_max_inr:,.0f}"]
+        ]
+        op_table = Table(op_rows, colWidths=[2 * inch, 2 * inch, 2 * inch])
+        op_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c3e50")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        elems.append(op_table)
+        elems.append(Spacer(1, 0.2 * inch))
+        
+        elems.append(Paragraph("Top Attack Scenarios", styles["Heading3"]))
+        if impact_report.scenario_matrix:
+            sc_rows = [["Scenario", "Paths", "Exposure (₹)", "Prevention Cost (₹)"]]
+            for scenario in impact_report.scenario_matrix[:3]:
+                sc_rows.append([
+                    scenario["name"],
+                    str(scenario["path_count"]),
+                    f"{scenario['total_exposure_min_inr']:,.0f}",
+                    f"{scenario['prevention_cost_inr']:,.0f}"
+                ])
+            sc_table = Table(sc_rows, colWidths=[2.5 * inch, 0.7 * inch, 1.5 * inch, 1.3 * inch])
+            sc_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c3e50")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]))
+            elems.append(sc_table)
+        
+        elems.append(PageBreak())
 
     elems.append(Paragraph("Asset Inventory", styles["Heading2"]))
     assets_sorted = sorted(scan.assets, key=lambda asset: -(asset.risk_score or 0))
