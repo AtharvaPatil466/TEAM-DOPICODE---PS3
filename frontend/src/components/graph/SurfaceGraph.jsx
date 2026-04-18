@@ -164,7 +164,7 @@ function SurfaceGraph({ graph, details, assetsById }) {
         >
           {graph.edges.map((edge) => {
             const from = nodeMap[edge.from];
-            to = nodeMap[edge.to];
+            const to = nodeMap[edge.to];
             if (!from || !to) {
               return null;
             }
