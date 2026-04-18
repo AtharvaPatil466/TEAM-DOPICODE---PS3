@@ -17,6 +17,7 @@ from backend.scanner.tech_fingerprint import fingerprint
 from backend.scanner.admin_panel import detect_admin_panels
 from backend.scanner.cloud_buckets import check_buckets
 from backend.scanner.ssl_analyzer import analyze_batch
+from backend.scanner.takeover import scan_takeovers
 from backend.scanner import nmap_scanner
 
 from backend.intelligence.cve_fetcher import fetch_cves
@@ -34,19 +35,38 @@ async def _emit_progress(scan_id: int, db: Session, scan: Scan, phase: str, pct:
     await bus.publish("progress", {"phase": phase, "percent": pct}, scan_id)
 
 
-async def _external_phase(db: Session, scan: Scan) -> list[Asset]:
+async def _external_phase(db: Session, scan: Scan, demo_mode: bool = False) -> list[Asset]:
     scan_id = scan.id
     domain = scan.target_domain
 
     await _emit_progress(scan_id, db, scan, "subdomain_enum", 5)
-    subs = await enumerate_subdomains(domain)
+    from backend.scanner.wordlists import COMMON_SUBDOMAINS
+    wordlist = COMMON_SUBDOMAINS[:500] if demo_mode else None
+    subs = await enumerate_subdomains(domain, wordlist=wordlist)
     await bus.publish("progress", {"phase": "subdomain_enum", "found": len(subs)}, scan_id)
 
     await _emit_progress(scan_id, db, scan, "live_prober", 15)
     live: list[LiveHost] = await probe_hosts(subs)
 
+    await _emit_progress(scan_id, db, scan, "takeover_check", 20)
+    try:
+        takeovers = await scan_takeovers([h.host for h in live] + subs)
+    except Exception as e:
+        log.warning("takeover scan failed: %s", e)
+        takeovers = []
+    takeover_by_host = {t.host: t for t in takeovers}
+    for t in takeovers:
+        await bus.publish("subdomain_takeover_detected", {
+            "host": t.host, "provider": t.provider, "cname": t.cname,
+            "status": t.status, "evidence": t.evidence,
+        }, scan_id)
+
     await _emit_progress(scan_id, db, scan, "admin_panel", 25)
-    admin_hits = await detect_admin_panels(live)
+    if demo_mode:
+        from backend.scanner.wordlists import ADMIN_PANEL_PATHS
+        admin_hits = await detect_admin_panels(live, paths=ADMIN_PANEL_PATHS[:15])
+    else:
+        admin_hits = await detect_admin_panels(live)
     admin_by_host: dict[str, list[dict]] = {}
     for h in admin_hits:
         admin_by_host.setdefault(h.host, []).append({
@@ -100,6 +120,14 @@ async def _external_phase(db: Session, scan: Scan) -> list[Asset]:
             admin_panels=admin_by_host.get(h.host, []),
             ssl_info=ssl_dict,
         )
+        t = takeover_by_host.get(h.host)
+        if t is not None:
+            tech_stack = asset.tech_stack or {}
+            tech_stack["subdomain_takeover"] = {
+                "provider": t.provider, "cname": t.cname,
+                "status": t.status, "evidence": t.evidence,
+            }
+            asset.tech_stack = tech_stack
         db.add(asset)
         db.flush()
         assets.append(asset)
@@ -391,7 +419,7 @@ async def _impact_phase(db: Session, scan: Scan) -> None:
         }, scan.id)
 
 
-async def run_scan(scan_id: int, domain: str, subnet: str | None) -> None:
+async def run_scan(scan_id: int, domain: str, subnet: str | None, demo_mode: bool = False) -> None:
     db = SessionLocal()
     try:
         scan = db.get(Scan, scan_id)
@@ -402,7 +430,8 @@ async def run_scan(scan_id: int, domain: str, subnet: str | None) -> None:
         await bus.publish("scan_started", {"domain": domain, "subnet": subnet}, scan_id)
 
         try:
-            external = await asyncio.wait_for(_external_phase(db, scan), timeout=180.0)
+            ext_timeout = 60.0 if demo_mode else 180.0
+            external = await asyncio.wait_for(_external_phase(db, scan, demo_mode=demo_mode), timeout=ext_timeout)
         except asyncio.TimeoutError:
             log.warning("External phase timed out for scan %d, proceeding with partial results", scan_id)
             external = db.query(Asset).filter_by(scan_id=scan.id, exposure="external").all()

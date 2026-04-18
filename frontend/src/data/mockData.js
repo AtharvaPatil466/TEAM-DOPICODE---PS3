@@ -7,7 +7,7 @@ export const summaryMetrics = [
 
 export const topActions = [
   {
-    title: "Restrict `admin.atlas-demo.com` immediately",
+    title: "Restrict `admin.shadowtrace-demo.xyz` immediately",
     detail:
       "Public admin portal exposes a legacy login page and should be moved behind VPN or IP allowlists."
   },
@@ -17,19 +17,19 @@ export const topActions = [
       "Two storage buckets allow unauthenticated listing of internal exports and staging assets."
   },
   {
-    title: "Patch outdated CMS on `portal.atlas-demo.com`",
+    title: "Patch outdated CMS on `portal.shadowtrace-demo.xyz`",
     detail:
       "Version fingerprinting indicates known high-severity CVEs with reliable exploit paths."
   }
 ];
 
 export const narrative =
-  "Atlas mapped the full public attack surface from a single root domain, then translated the noisy findings into a prioritized action plan a CTO can act on this week.";
+  "ShadowTrace mapped the full public attack surface from a single root domain, then translated the noisy findings into a prioritized action plan a CTO can act on this week.";
 
 export const findingRows = [
   {
     id: "F-101",
-    asset: "admin.atlas-demo.com",
+    asset: "admin.shadowtrace-demo.xyz",
     kind: "Admin panel",
     severity: "Critical",
     reason: "Public login panel + exposed version header",
@@ -37,7 +37,7 @@ export const findingRows = [
   },
   {
     id: "F-102",
-    asset: "storage-atlas-demo",
+    asset: "storage-shadowtrace-demo",
     kind: "S3 bucket",
     severity: "Critical",
     reason: "Unauthenticated listing enabled",
@@ -45,7 +45,7 @@ export const findingRows = [
   },
   {
     id: "F-103",
-    asset: "portal.atlas-demo.com",
+    asset: "portal.shadowtrace-demo.xyz",
     kind: "Web app",
     severity: "High",
     reason: "Outdated CMS with mapped CVEs",
@@ -53,7 +53,7 @@ export const findingRows = [
   },
   {
     id: "F-104",
-    asset: "staging.atlas-demo.com",
+    asset: "staging.shadowtrace-demo.xyz",
     kind: "Subdomain",
     severity: "High",
     reason: "Exposed test environment with debug endpoints",
@@ -61,7 +61,7 @@ export const findingRows = [
   },
   {
     id: "F-105",
-    asset: "blob.atlas-demo.net",
+    asset: "blob.shadowtrace-demo.net",
     kind: "Azure blob",
     severity: "Medium",
     reason: "Predictable naming pattern suggests open snapshots",
@@ -70,12 +70,12 @@ export const findingRows = [
 ];
 
 export const graphNodes = [
-  { id: "root", label: "atlas-demo.com", x: 360, y: 100, severity: "Neutral", type: "domain" },
-  { id: "portal", label: "portal.atlas-demo.com", x: 160, y: 220, severity: "High", type: "web" },
-  { id: "admin", label: "admin.atlas-demo.com", x: 360, y: 260, severity: "Critical", type: "admin" },
-  { id: "staging", label: "staging.atlas-demo.com", x: 580, y: 220, severity: "High", type: "staging" },
-  { id: "s3", label: "storage-atlas-demo", x: 250, y: 390, severity: "Critical", type: "storage" },
-  { id: "blob", label: "blob.atlas-demo.net", x: 470, y: 400, severity: "Medium", type: "storage" }
+  { id: "root", label: "shadowtrace-demo.xyz", x: 360, y: 100, severity: "Neutral", type: "domain" },
+  { id: "portal", label: "portal.shadowtrace-demo.xyz", x: 160, y: 220, severity: "High", type: "web" },
+  { id: "admin", label: "admin.shadowtrace-demo.xyz", x: 360, y: 260, severity: "Critical", type: "admin" },
+  { id: "staging", label: "staging.shadowtrace-demo.xyz", x: 580, y: 220, severity: "High", type: "staging" },
+  { id: "s3", label: "storage-shadowtrace-demo", x: 250, y: 390, severity: "Critical", type: "storage" },
+  { id: "blob", label: "blob.shadowtrace-demo.net", x: 470, y: 400, severity: "Medium", type: "storage" }
 ];
 
 export const graphEdges = [
@@ -122,7 +122,7 @@ export const nodeDetails = {
 export const killChainSteps = [
   {
     title: "External discovery",
-    summary: "Attacker enumerates the root domain and finds `admin.atlas-demo.com` within minutes."
+    summary: "Attacker enumerates the root domain and finds `admin.shadowtrace-demo.xyz` within minutes."
   },
   {
     title: "Initial foothold",
@@ -142,7 +142,7 @@ export const reportSections = [
   {
     heading: "Executive summary",
     body:
-      "Atlas translates scattered internet exposure into a prioritized remediation plan tuned for a 50-person company."
+      "ShadowTrace translates scattered internet exposure into a prioritized remediation plan tuned for a 50-person company."
   },
   {
     heading: "Critical exposures",

@@ -17,6 +17,7 @@ from backend.db.models import Scan, Asset, Port, CVE, GraphEdge, AttackPath, Imp
 from backend.api import schemas
 from backend.api.demo_replay import replay_scan
 from backend.api.events import bus
+from backend.api.validators import normalize_domain
 from backend.intelligence.edge_rules import rulebook as graph_rulebook, RULES
 
 logging.basicConfig(level=LOG_LEVEL)
@@ -44,6 +45,20 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def _strip_api_prefix(request: Request, call_next):
+    """Accept both '/foo' and '/api/foo' by rewriting the path before routing."""
+    path = request.scope.get("path", "")
+    if path.startswith("/api/") or path == "/api":
+        request.scope["path"] = path[4:] or "/"
+        raw = request.scope.get("raw_path")
+        if raw and raw.startswith(b"/api/"):
+            request.scope["raw_path"] = raw[4:] or b"/"
+        elif raw == b"/api":
+            request.scope["raw_path"] = b"/"
+    return await call_next(request)
+
+
 @app.on_event("startup")
 def _startup() -> None:
     init_db()
@@ -55,12 +70,22 @@ def health() -> dict:
 
 
 @app.post("/scan/start", response_model=schemas.ScanStartResponse)
-async def scan_start(req: schemas.ScanStartRequest, request: Request, db: Session = Depends(get_db)) -> schemas.ScanStartResponse:
+async def scan_start(
+    req: schemas.ScanStartRequest,
+    request: Request,
+    mode: Optional[str] = Query(None, description="Use 'demo' for truncated, fast scans"),
+    db: Session = Depends(get_db),
+) -> schemas.ScanStartResponse:
     _check_rate_limit(request)
     from backend.api.orchestrator import run_scan
 
+    try:
+        clean_domain = normalize_domain(req.domain)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
     scan = Scan(
-        target_domain=req.domain,
+        target_domain=clean_domain,
         target_subnet=req.subnet,
         company_size=req.company_size,
         industry_sector=req.industry_sector,
@@ -70,8 +95,18 @@ async def scan_start(req: schemas.ScanStartRequest, request: Request, db: Sessio
     db.add(scan)
     db.commit()
     db.refresh(scan)
-    asyncio.create_task(run_scan(scan.id, req.domain, req.subnet))
+    asyncio.create_task(run_scan(scan.id, clean_domain, req.subnet, demo_mode=(mode == "demo")))
     return schemas.ScanStartResponse(scan_id=scan.id, status=scan.status)
+
+
+@app.post("/scan", response_model=schemas.ScanStartResponse)
+async def scan_start_alias(
+    req: schemas.ScanStartRequest,
+    request: Request,
+    mode: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+) -> schemas.ScanStartResponse:
+    return await scan_start(req, request, mode=mode, db=db)
 
 
 @app.get("/scan/status/{scan_id}", response_model=schemas.ScanStatusResponse)
@@ -109,6 +144,101 @@ async def scan_live(ws: WebSocket) -> None:
         pass
     finally:
         await bus.disconnect(ws)
+
+
+@app.websocket("/scan/{scan_id}/stream")
+async def scan_stream(ws: WebSocket, scan_id: int) -> None:
+    try:
+        await bus.subscribe_scan(ws, scan_id)
+    except WebSocketDisconnect:
+        pass
+
+
+@app.websocket("/api/scan/{scan_id}/stream")
+async def scan_stream_api(ws: WebSocket, scan_id: int) -> None:
+    try:
+        await bus.subscribe_scan(ws, scan_id)
+    except WebSocketDisconnect:
+        pass
+
+
+@app.websocket("/api/scan/live")
+async def scan_live_api(ws: WebSocket) -> None:
+    await scan_live(ws)
+
+
+@app.get("/scan/{scan_id}/status", response_model=schemas.ScanStatusResponse)
+def scan_status_alias(scan_id: int, db: Session = Depends(get_db)) -> schemas.ScanStatusResponse:
+    return scan_status(scan_id, db)
+
+
+@app.get("/scan/{scan_id}/impact", response_model=schemas.ImpactResponse)
+def scan_impact_by_id(
+    scan_id: int,
+    company_size: Optional[str] = Query(None, regex="^(startup|small|sme|medium|enterprise|large)$"),
+    db: Session = Depends(get_db),
+) -> schemas.ImpactResponse:
+    scan = db.get(Scan, scan_id)
+    if scan is None:
+        raise HTTPException(404, "scan not found")
+    if company_size is not None:
+        normalized = {"startup": "small", "sme": "medium", "enterprise": "large"}.get(company_size, company_size)
+        if scan.company_size != normalized:
+            scan.company_size = normalized
+            db.commit()
+            from backend.intelligence.impact_simulator import compute_impact
+            compute_impact(db, scan)
+    return impact(company_size=None, db=db) if scan.id == (_latest_scan(db).id if _latest_scan(db) else -1) else _impact_for(scan, db)
+
+
+def _impact_for(scan: Scan, db: Session) -> schemas.ImpactResponse:
+    report = db.query(ImpactReport).filter(ImpactReport.scan_id == scan.id).order_by(desc(ImpactReport.id)).first()
+    if not report:
+        raise HTTPException(404, "impact report not yet computed for this scan")
+    return schemas.ImpactResponse(
+        scan_id=scan.id,
+        company_size=scan.company_size or "small",
+        industry_sector=scan.industry_sector or "technology",
+        asset_classifications=report.asset_classifications,
+        regulatory_exposure=schemas.RegulatoryExposure(
+            min_inr=report.regulatory_min_inr, max_inr=report.regulatory_max_inr,
+            min_formatted=f"₹{report.regulatory_min_inr:,.0f}",
+            max_formatted=f"₹{report.regulatory_max_inr:,.0f}",
+            applicable_law="DPDP Act 2023",
+            penalty_tier=report.regulatory_breakdown.get("penalty_tier", "Unknown"),
+            breakdown=report.regulatory_breakdown,
+        ),
+        operational_loss=schemas.OperationalLoss(
+            downtime={"min_inr": report.downtime_cost_min_inr, "max_inr": report.downtime_cost_max_inr,
+                      "mttr_hours_low": report.operational_breakdown.get("mttr_low", 0),
+                      "mttr_hours_high": report.operational_breakdown.get("mttr_high", 0)},
+            incident_response={"min_inr": report.incident_response_min_inr, "max_inr": report.incident_response_max_inr},
+            customer_churn={"min_inr": report.churn_cost_min_inr, "max_inr": report.churn_cost_max_inr},
+            total_min_inr=report.downtime_cost_min_inr + report.incident_response_min_inr + report.churn_cost_min_inr,
+            total_max_inr=report.downtime_cost_max_inr + report.incident_response_max_inr + report.churn_cost_max_inr,
+        ),
+        total_exposure_min_inr=report.total_exposure_min_inr,
+        total_exposure_max_inr=report.total_exposure_max_inr,
+        total_formatted=f"₹{report.total_exposure_min_inr:,.0f} - ₹{report.total_exposure_max_inr:,.0f}",
+        executive_advisory=report.executive_advisory,
+    )
+
+
+@app.get("/scan/{scan_id}/results")
+def scan_results(scan_id: int, db: Session = Depends(get_db)) -> dict:
+    scan = db.get(Scan, scan_id)
+    if scan is None:
+        raise HTTPException(404, "scan not found")
+    return {
+        "scan_id": scan.id,
+        "status": scan.status,
+        "domain": scan.target_domain,
+        "subnet": scan.target_subnet,
+        "total_assets": scan.total_assets,
+        "total_cves": scan.total_cves,
+        "assets": [_asset_to_summary(a).model_dump() for a in scan.assets],
+        "graph": graph(db).model_dump(),
+    }
 
 
 def _latest_scan(db: Session) -> Scan | None:
@@ -423,29 +553,77 @@ async def lab_validate(db: Session = Depends(get_db)) -> schemas.LabValidateResp
     )
 
 
+def _render_pdf(db: Session, scan: Scan, style: str) -> bytes:
+    try:
+        from backend.intelligence.report import build_pdf, build_executive_pdf
+    except ImportError:
+        raise HTTPException(503, "report module not yet implemented")
+    return build_executive_pdf(db, scan) if style == "executive" else build_pdf(db, scan)
+
+
 @app.get("/report/pdf")
-def report_pdf(db: Session = Depends(get_db)) -> Response:
+def report_pdf(style: str = Query("full", regex="^(full|executive)$"), db: Session = Depends(get_db)) -> Response:
     scan = _latest_scan(db)
     if scan is None:
         raise HTTPException(404, "no scans available")
-    try:
-        from backend.intelligence.report import build_pdf
-    except ImportError:
-        raise HTTPException(503, "report module not yet implemented")
-    pdf_bytes = build_pdf(db, scan)
+    pdf_bytes = _render_pdf(db, scan, style)
+    suffix = "-executive" if style == "executive" else ""
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="shadowtrace-scan-{scan.id}.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="shadowtrace-scan-{scan.id}{suffix}.pdf"'},
     )
 
 
+@app.get("/report/{scan_id}/pdf")
+def report_pdf_by_id(
+    scan_id: int,
+    style: str = Query("full", regex="^(full|executive)$"),
+    db: Session = Depends(get_db),
+) -> Response:
+    scan = db.get(Scan, scan_id)
+    if scan is None:
+        raise HTTPException(404, "scan not found")
+    pdf_bytes = _render_pdf(db, scan, style)
+    suffix = "-executive" if style == "executive" else ""
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="shadowtrace-scan-{scan.id}{suffix}.pdf"'},
+    )
+
+
+@app.get("/demo/preloaded", response_model=schemas.LatestScanResponse)
+def demo_preloaded(db: Session = Depends(get_db)) -> schemas.LatestScanResponse:
+    """Return the most recent completed scan as a stage-safe demo payload."""
+    scan = (
+        db.query(Scan)
+        .filter(Scan.status == "completed")
+        .order_by(desc(Scan.id))
+        .first()
+    ) or _latest_scan(db)
+    if scan is None:
+        raise HTTPException(404, "no preloaded scan available")
+    return _scan_to_response(scan)
+
+
 @app.get("/impact", response_model=schemas.ImpactResponse)
-def impact(db: Session = Depends(get_db)) -> schemas.ImpactResponse:
+def impact(
+    company_size: Optional[str] = Query(None, regex="^(startup|small|sme|medium|enterprise|large)$"),
+    db: Session = Depends(get_db),
+) -> schemas.ImpactResponse:
     scan = _latest_scan(db)
     if scan is None:
         raise HTTPException(404, "no scans available")
-    
+
+    if company_size is not None:
+        normalized = {"startup": "small", "sme": "medium", "enterprise": "large"}.get(company_size, company_size)
+        if scan.company_size != normalized:
+            scan.company_size = normalized
+            db.commit()
+            from backend.intelligence.impact_simulator import compute_impact
+            compute_impact(db, scan)
+
     report = db.query(ImpactReport).filter(ImpactReport.scan_id == scan.id).order_by(desc(ImpactReport.id)).first()
     if not report:
         # Avoid 404ing the frontend during the bootstrap phase. Return structural defaults.

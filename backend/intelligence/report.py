@@ -448,3 +448,175 @@ def build_pdf(db: Session, scan: Scan) -> bytes:
 
     doc.build(elems)
     return buf.getvalue()
+
+
+def _format_inr_hero(amount_min: float, amount_max: float) -> str:
+    """Collapse the min-max range into a single dramatic headline figure."""
+    avg = (amount_min + amount_max) / 2
+    if avg >= 10000000:
+        return f"₹{avg / 10000000:.1f} Cr"
+    if avg >= 100000:
+        return f"₹{avg / 100000:.1f} L"
+    return f"₹{avg:,.0f}"
+
+
+def _risk_gauge(score: float, width: float = 4.5 * inch, height: float = 0.45 * inch):
+    """Horizontal tri-color gauge: green → amber → red, with a needle at `score`."""
+    from reportlab.graphics.shapes import Drawing, Rect, Polygon, String
+    d = Drawing(width, height + 20)
+    seg = width / 3.0
+    d.add(Rect(0, 10, seg, height, fillColor=colors.HexColor("#22c55e"), strokeColor=None))
+    d.add(Rect(seg, 10, seg, height, fillColor=colors.HexColor("#fbbf24"), strokeColor=None))
+    d.add(Rect(seg * 2, 10, seg, height, fillColor=colors.HexColor("#ef4444"), strokeColor=None))
+    needle_x = max(0, min(width, (score / 100.0) * width))
+    d.add(Polygon(
+        points=[needle_x - 5, 10 + height, needle_x + 5, 10 + height, needle_x, 10 + height - 10],
+        fillColor=colors.HexColor("#0b1220"), strokeColor=colors.HexColor("#0b1220"),
+    ))
+    d.add(String(0, 0, "Low", fontSize=8, fillColor=colors.grey))
+    d.add(String(width / 2 - 10, 0, "Moderate", fontSize=8, fillColor=colors.grey))
+    d.add(String(width - 25, 0, "Critical", fontSize=8, fillColor=colors.grey))
+    return d
+
+
+def _plain_english_findings(scan: Scan, paths: list[dict]) -> list[str]:
+    """Top 5 findings translated for a non-technical reader."""
+    out: list[str] = []
+    # Subdomain takeovers are the "highest drama" per PRD — list first.
+    for a in scan.assets:
+        t = (a.tech_stack or {}).get("subdomain_takeover") if isinstance(a.tech_stack, dict) else None
+        if t:
+            out.append(f"A subdomain ({a.hostname}) points at {t.get('provider')} with no live tenant — an attacker can claim it and serve content under your brand.")
+            if len(out) >= 5:
+                return out
+    # Exposed admin panels.
+    for a in scan.assets:
+        if a.admin_panels:
+            p = a.admin_panels[0]
+            out.append(f"An administrator login page is exposed to the public internet at {a.hostname}{p.get('path', '')} — anyone on the internet can attempt to sign in.")
+            if len(out) >= 5:
+                return out
+            break
+    # High-CVSS CVEs.
+    for a in scan.assets:
+        for c in a.cves:
+            if (c.cvss_score or 0) >= 9.0:
+                out.append(f"{a.hostname} runs software with a critical vulnerability ({c.cve_id}, CVSS {c.cvss_score:.1f}) — a patch exists and should be applied immediately.")
+                if len(out) >= 5:
+                    return out
+                break
+    # Crown-jewel reachability from attack paths.
+    if paths:
+        top = paths[0]
+        labels = top.get("sequence_labels") or []
+        if labels:
+            out.append(f"An attacker starting from the public internet can reach {labels[-1]} in {len(labels) - 1} step(s) — this is the shortest modeled kill chain.")
+    # TLS posture.
+    for a in scan.assets:
+        ssl = a.ssl_info if isinstance(a.ssl_info, dict) else None
+        if ssl and (ssl.get("expired") or not ssl.get("hostname_match", True)):
+            reason = "expired" if ssl.get("expired") else "mismatched hostname"
+            out.append(f"TLS certificate on {a.hostname} is {reason} — browsers will warn your customers and attackers can impersonate the service.")
+            if len(out) >= 5:
+                return out
+            break
+    return out[:5]
+
+
+def build_executive_pdf(db: Session, scan: Scan) -> bytes:
+    """2-page executive report.
+
+    Page 1 (Fear): large centered rupee hero, risk gauge, top-5 findings in
+    plain English.
+    Page 2 (Fix): numbered prioritized action list ranked by paths blocked.
+    """
+    from sqlalchemy import desc as _desc
+    edges = build_edges(scan)
+    g = to_networkx(scan, edges)
+    paths = build_candidate_paths(scan, g, limit=25)
+    remediations = build_remediation_candidates(paths, scan)
+    impact = db.query(ImpactReport).filter(ImpactReport.scan_id == scan.id).order_by(_desc(ImpactReport.id)).first()
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=letter, title=f"ShadowTrace Executive {scan.id}",
+                            leftMargin=0.7 * inch, rightMargin=0.7 * inch,
+                            topMargin=0.6 * inch, bottomMargin=0.6 * inch)
+    styles = getSampleStyleSheet()
+    brand = ParagraphStyle("brand", parent=styles["BodyText"], fontSize=10, leading=12,
+                           textColor=colors.HexColor("#6b7280"), alignment=1)
+    subtitle = ParagraphStyle("subtitle", parent=styles["BodyText"], fontSize=13, leading=16,
+                              textColor=colors.HexColor("#0b1220"), alignment=1)
+    hero = ParagraphStyle("hero", parent=styles["Heading1"], fontSize=64, leading=72,
+                          textColor=colors.HexColor("#c0392b"), alignment=1)
+    hero_caption = ParagraphStyle("hero_caption", parent=styles["BodyText"], fontSize=10,
+                                  leading=12, textColor=colors.HexColor("#6b7280"), alignment=1)
+    section = ParagraphStyle("section", parent=styles["Heading2"], fontSize=13, leading=16,
+                             textColor=colors.HexColor("#0b1220"), spaceBefore=8, spaceAfter=4)
+    fear_h1 = ParagraphStyle("fear_h1", parent=styles["Heading1"], fontSize=26, leading=30,
+                             textColor=colors.HexColor("#0b1220"), alignment=1)
+    body = _style_body()
+    elems = []
+
+    # ── Page 1: Fear ─────────────────────────────────────────────
+    elems.append(Paragraph("SHADOWTRACE EXECUTIVE BRIEF", brand))
+    elems.append(Paragraph(html.escape(scan.target_domain or "unknown"), subtitle))
+    elems.append(Spacer(1, 0.25 * inch))
+
+    elems.append(Paragraph("Estimated breach exposure", fear_h1))
+    elems.append(Spacer(1, 0.1 * inch))
+    if impact:
+        hero_amount = _format_inr_hero(impact.total_exposure_min_inr, impact.total_exposure_max_inr)
+        range_text = f"₹{impact.total_exposure_min_inr:,.0f} — ₹{impact.total_exposure_max_inr:,.0f}"
+    else:
+        hero_amount = "₹—"
+        range_text = "Impact model not yet computed"
+    elems.append(Paragraph(hero_amount, hero))
+    elems.append(Paragraph(range_text, hero_caption))
+    elems.append(Spacer(1, 0.15 * inch))
+
+    max_risk = max((a.risk_score or 0 for a in scan.assets), default=0)
+    gauge = _risk_gauge(float(max_risk))
+    gauge.hAlign = "CENTER"
+    elems.append(gauge)
+    elems.append(Spacer(1, 0.2 * inch))
+
+    elems.append(Paragraph("Top findings", section))
+    findings = _plain_english_findings(scan, paths)
+    if findings:
+        for i, f in enumerate(findings, start=1):
+            elems.append(Paragraph(f"<b>{i}.</b> {html.escape(f)}", body))
+            elems.append(Spacer(1, 0.05 * inch))
+    else:
+        elems.append(Paragraph("No material findings — attack surface appears clean for the inputs provided.", body))
+
+    elems.append(PageBreak())
+
+    # ── Page 2: Fix ──────────────────────────────────────────────
+    elems.append(Paragraph("What to fix first", fear_h1))
+    elems.append(Spacer(1, 0.1 * inch))
+    elems.append(Paragraph(
+        "Remediations are ranked by how many modeled attack paths each one breaks. "
+        "Work top-down — each fix removes the largest remaining slice of risk.",
+        body,
+    ))
+    elems.append(Spacer(1, 0.2 * inch))
+
+    if remediations:
+        for i, r in enumerate(remediations[:5], start=1):
+            elems.append(Paragraph(
+                f"<b>{i}. {html.escape(r['summary'])}</b>",
+                ParagraphStyle("rem_h", parent=body, fontSize=12, leading=15,
+                               textColor=colors.HexColor("#0b1220")),
+            ))
+            detail = f"Breaks <b>{r['blocks_paths']}</b> modeled attack path(s)"
+            if r.get("max_cvss"):
+                detail += f" · highest CVSS addressed: <b>{r['max_cvss']:.1f}</b>"
+            if r.get("rule_ids"):
+                detail += f" · rules: {', '.join(r['rule_ids'][:3])}"
+            elems.append(Paragraph(detail, body))
+            elems.append(Spacer(1, 0.18 * inch))
+    else:
+        elems.append(Paragraph("No remediations generated — graph is empty.", body))
+
+    doc.build(elems)
+    return buf.getvalue()

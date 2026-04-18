@@ -2,6 +2,7 @@ import { NavLink, Outlet } from "react-router-dom";
 
 const links = [
   { to: "/", label: "Scan Setup" },
+  { to: "/cto", label: "CTO View" },
   { to: "/overview", label: "Overview" },
   { to: "/surface-map", label: "Surface Map" },
   { to: "/kill-chain", label: "Kill Chain" },

@@ -8,12 +8,14 @@ import SurfaceMapPage from "../pages/SurfaceMapPage";
 import ImpactPage from "../pages/ImpactPage";
 import SimulatePage from "../pages/SimulatePage";
 import DiffPage from "../pages/DiffPage";
+import CtoPage from "../pages/CtoPage";
 
 function App() {
   return (
     <Routes>
       <Route element={<AppLayout />}>
         <Route path="/" element={<ScanPage />} />
+        <Route path="/cto" element={<CtoPage />} />
         <Route path="/overview" element={<OverviewPage />} />
         <Route path="/surface-map" element={<SurfaceMapPage />} />
         <Route path="/kill-chain" element={<KillChainPage />} />

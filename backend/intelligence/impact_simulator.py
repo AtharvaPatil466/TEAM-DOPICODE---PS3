@@ -19,6 +19,15 @@ COMPANY_SIZES = {
     "large": {"employees": 1000, "records_low": 500000, "records_high": 5000000, "ir_low": 15000000, "ir_high": 80000000, "hourly_revenue": 200000, "annual_revenue": 1600000000},
 }
 
+# Impact multipliers for high-risk finding types (per PRD).
+# Applied to the base exposure for paths whose route exercises a finding.
+FINDING_MULTIPLIERS = {
+    "subdomain_takeover": 8.0,
+    "public_s3": 6.0,
+    "exposed_admin": 5.0,
+}
+
+
 INDUSTRY_MULTIPLIERS = {
     "technology": 1.5,
     "retail": 1.2,
@@ -216,11 +225,21 @@ def _categorize_paths(paths: list[dict], classifications: dict[int, dict]) -> li
         path_added = False
         target_id = path["asset_sequence"][-1]
         target_class = classifications.get(target_id, {})
-        
+
+        has_takeover = any(hop.get("rule_id") == "TAKEOVER-001" for hop in path["hops"])
+        mult = 1.0
+        if has_takeover:
+            mult = max(mult, FINDING_MULTIPLIERS["subdomain_takeover"])
+
         has_rce = any((hop.get("cvss") or 0.0) >= 9.0 and hop.get("attack_vector") == "NETWORK" for hop in path["hops"])
         has_shadow = any(hop.get("rule_id") == "SHADOW-001" for hop in path["hops"])
         has_admin = any(hop.get("rule_id") == "MISC-001" for hop in path["hops"])
         has_bucket = any(hop.get("rule_id") == "CLOUD-001" for hop in path["hops"])
+        if has_bucket:
+            mult = max(mult, FINDING_MULTIPLIERS["public_s3"])
+        if has_admin:
+            mult = max(mult, FINDING_MULTIPLIERS["exposed_admin"])
+        path["impact_multiplier"] = mult
         has_lateral = any(hop.get("rule_id") == "NET-001" for hop in path["hops"])
         has_supply = any(hop.get("rule_id") == "SUPPLY-001" for hop in path["hops"])
         has_cred = any(hop.get("rule_id") == "CRED-001" for hop in path["hops"])
@@ -312,8 +331,9 @@ def compute_impact(db, scan) -> Optional[dict]:
         path_count = len(data["paths"])
         prevention, eng_hours, prevention_summary = _estimate_prevention_cost(data["paths"])
         
-        exposure_min = tot_min * (path_count / len(paths))
-        exposure_max = tot_max * (path_count / len(paths))
+        bucket_mult = max((p.get("impact_multiplier", 1.0) for p in data["paths"]), default=1.0)
+        exposure_min = tot_min * (path_count / len(paths)) * bucket_mult
+        exposure_max = tot_max * (path_count / len(paths)) * bucket_mult
         average_exposure = (exposure_min + exposure_max) / 2
         
         out_scenarios.append({
