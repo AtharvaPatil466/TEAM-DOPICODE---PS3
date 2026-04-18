@@ -29,7 +29,7 @@ function AppLayout() {
       <aside className="sidebar">
         <div className="sidebar-top">
           <div>
-            <p className="eyebrow">PS3 Frontend</p>
+
             <h1>ShadowTrace</h1>
           </div>
           <p className="sidebar-copy">
