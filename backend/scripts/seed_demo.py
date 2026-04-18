@@ -1,21 +1,12 @@
-"""Seed the database with a realistic demo scan — runs with NO network access.
-
-Use this when:
-  * Demo machine has no internet (judge's laptop, conference wifi is dead)
-  * Docker lab isn't running
-  * You want a deterministic scan that matches the demo narrative every time
-
-Populates: 4 external assets, 4 internal lab assets, CVEs, graph edges, the
-canonical two-hop attack path from exposed Apache -> MySQL crown jewel.
-
-Run:  python -m backend.scripts.seed_demo
-"""
+"""Seed the database with a realistic demo scan — runs with NO network access."""
 from datetime import datetime
 
 from backend.db import SessionLocal, init_db
 from backend.db.models import (
-    Asset, CVE, GraphEdge, Port, Scan, AttackPath,
+    Asset, CVE, Port, Scan,
 )
+from backend.intelligence.attack_path import compute_attack_path
+from backend.intelligence.graph_builder import build_edges, persist_edges, to_networkx
 
 
 def _add_port(db, asset, port, service, version=None, protocol="tcp"):
@@ -25,11 +16,21 @@ def _add_port(db, asset, port, service, version=None, protocol="tcp"):
     ))
 
 
-def _add_cve(db, asset, cve_id, cvss, description, remediation, vector="NETWORK"):
+def _add_cve(
+    db,
+    asset,
+    cve_id,
+    cvss,
+    description,
+    remediation,
+    vector="NETWORK",
+    complexity="LOW",
+):
     db.add(CVE(
         asset_id=asset.id, cve_id=cve_id, cvss_score=cvss,
         description=description, remediation=remediation,
         attack_vector=vector,
+        attack_complexity=complexity,
     ))
 
 
@@ -98,10 +99,10 @@ def seed(domain: str = "democorp.io", subnet: str = "172.28.0.0/24") -> int:
         db.flush()
 
         _add_cve(db, ext_legacy, "CVE-2021-41773", 9.8,
-                 "Apache HTTP Server 2.4.49 path traversal and file disclosure vulnerability.",
+                 "Apache HTTP Server 2.4.49 path traversal and file disclosure vulnerability with RCE potential when mod_cgi is enabled.",
                  "Upgrade Apache httpd to 2.4.51 or later immediately.")
         _add_cve(db, ext_legacy, "CVE-2021-42013", 9.8,
-                 "Apache 2.4.49/2.4.50 path traversal — follow-on to CVE-2021-41773.",
+                 "Apache 2.4.49/2.4.50 path traversal and remote code execution follow-on to CVE-2021-41773.",
                  "Upgrade Apache httpd to 2.4.51 or later.")
         _add_cve(db, ext_ci, "CVE-2024-23897", 9.1,
                  "Jenkins CLI arbitrary file read via argument parsing.",
@@ -139,51 +140,23 @@ def seed(domain: str = "democorp.io", subnet: str = "172.28.0.0/24") -> int:
         _add_port(db, int_mysql, 3306, "mysql", "MySQL 5.7.36")
         _add_cve(db, int_mysql, "CVE-2022-21417", 7.2,
                  "MySQL Server privilege escalation in InnoDB.",
-                 "Upgrade MySQL to 5.7.38+ or 8.0.28+.")
+                 "Upgrade MySQL to 5.7.38+ or 8.0.28+.",
+                 vector="LOCAL", complexity="HIGH")
 
         _add_port(db, int_iot, 80, "http", "BusyBox httpd 1.36")
         _add_port(db, int_rogue, 22, "ssh", "OpenSSH 9.3")
-
-        # --- Graph edges ---
-        edges = [
-            GraphEdge(scan_id=scan.id, source_id=0, target_id=ext_legacy.id,
-                      relationship_type="internet_reachable", weight=101 - 92.5),
-            GraphEdge(scan_id=scan.id, source_id=0, target_id=ext_ci.id,
-                      relationship_type="internet_reachable", weight=101 - 71.0),
-            GraphEdge(scan_id=scan.id, source_id=0, target_id=ext_api.id,
-                      relationship_type="internet_reachable", weight=101 - 58.0),
-            GraphEdge(scan_id=scan.id, source_id=0, target_id=ext_www.id,
-                      relationship_type="internet_reachable", weight=101 - 42.0),
-            GraphEdge(scan_id=scan.id, source_id=ext_legacy.id, target_id=int_apache.id,
-                      relationship_type="pivot_internal", weight=101 - 95.0),
-            GraphEdge(scan_id=scan.id, source_id=int_apache.id, target_id=int_mysql.id,
-                      relationship_type="lateral", weight=101 - 88.0),
-            GraphEdge(scan_id=scan.id, source_id=int_apache.id, target_id=int_iot.id,
-                      relationship_type="lateral", weight=101 - 48.0),
-            GraphEdge(scan_id=scan.id, source_id=int_apache.id, target_id=int_rogue.id,
-                      relationship_type="lateral", weight=101 - 55.0),
-        ]
-        db.add_all(edges)
-
-        # --- Canonical attack path ---
-        path = AttackPath(
-            scan_id=scan.id,
-            asset_sequence=[0, ext_legacy.id, int_apache.id, int_mysql.id],
-            total_risk_score=275.5,
-            narrative=(
-                "Step 1: Attacker starts on the public internet. "
-                f"Step 2: Compromise legacy.{domain} (web) via CVE-2021-41773 (CVSS 9.8). "
-                "Step 3: Compromise shadowlab-apache (web) via CVE-2021-41773 (CVSS 9.8). "
-                "Step 4: Compromise shadowlab-mysql (crown jewel) via CVE-2022-21417 (CVSS 7.2)."
-            ),
-        )
-        db.add(path)
 
         scan.total_assets = 8
         scan.total_cves = sum(len(a.cves) for a in
                               [ext_www, ext_api, ext_legacy, ext_ci,
                                int_apache, int_mysql, int_iot, int_rogue])
         db.commit()
+        db.refresh(scan)
+
+        edges = build_edges(scan)
+        persist_edges(db, scan, edges)
+        graph = to_networkx(scan, edges)
+        compute_attack_path(db, scan, graph)
         return scan.id
     finally:
         db.close()
