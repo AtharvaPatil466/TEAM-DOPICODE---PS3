@@ -66,7 +66,8 @@ class CVE(Base):
     cve_id = Column(String, nullable=False, index=True)
     description = Column(Text, nullable=True)
     cvss_score = Column(Float, nullable=True)
-    attack_vector = Column(String, nullable=True)
+    attack_vector = Column(String, nullable=True)      # NVD AV:N / AV:L / AV:A / AV:P
+    attack_complexity = Column(String, nullable=True)  # NVD AC:L / AC:H
     remediation = Column(Text, nullable=True)
     cached_at = Column(DateTime, default=datetime.utcnow)
 
@@ -82,6 +83,7 @@ class CVECache(Base):
     description = Column(Text, nullable=True)
     cvss_score = Column(Float, nullable=True)
     attack_vector = Column(String, nullable=True)
+    attack_complexity = Column(String, nullable=True)
     remediation = Column(Text, nullable=True)
     cached_at = Column(DateTime, default=datetime.utcnow)
 
@@ -90,10 +92,12 @@ class GraphEdge(Base):
     __tablename__ = "graph_edges"
     id = Column(Integer, primary_key=True)
     scan_id = Column(Integer, ForeignKey("scans.id"), nullable=False)
-    source_id = Column(Integer, ForeignKey("assets.id"), nullable=False)
-    target_id = Column(Integer, ForeignKey("assets.id"), nullable=False)
-    relationship_type = Column(String, default="reachable")  # reachable|exploits|contains
+    source_id = Column(Integer, nullable=False)   # 0 reserved for virtual Internet node
+    target_id = Column(Integer, nullable=False)
+    relationship_type = Column(String, default="reachable")
     weight = Column(Float, default=1.0)
+    rule_id = Column(String, index=True, nullable=True)   # edge_rules.py rule that fired
+    rationale = Column(Text, nullable=True)               # human-readable evidence
 
     scan = relationship("Scan", back_populates="edges")
 
