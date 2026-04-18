@@ -134,12 +134,28 @@ class AttackPathHop(BaseModel):
     verified_at: Optional[datetime] = None
 
 
+class HopValidation(BaseModel):
+    hostname: str
+    port: Optional[int] = None
+    success: bool
+    latency_ms: float
+    rule_id: Optional[str] = None
+    error: Optional[str] = None
+
+
+class PathValidation(BaseModel):
+    validated: bool
+    confidence: str  # CONFIRMED | PARTIAL | UNVERIFIED
+    hop_results: list[HopValidation] = Field(default_factory=list)
+
+
 class AttackPathCandidate(BaseModel):
     path_id: str
     sequence_labels: list[str]
     total_risk_score: float
     estimated_window: str
     hops: list[AttackPathHop]
+    validation: Optional[PathValidation] = None
 
 
 class RemediationCandidate(BaseModel):
@@ -158,6 +174,7 @@ class AttackPathResponse(BaseModel):
     path_id: Optional[str] = None
     estimated_window: Optional[str] = None
     persona: Optional[str] = None
+    validation: Optional[PathValidation] = None
     alternates: list[AttackPathCandidate] = Field(default_factory=list)
     remediation_candidates: list[RemediationCandidate] = Field(default_factory=list)
 
@@ -168,6 +185,13 @@ class SimulateRequest(BaseModel):
     persona: Optional[Persona] = None
 
 
+class ValidationSummary(BaseModel):
+    confirmed: int = 0
+    partial: int = 0
+    unverified: int = 0
+    total: int = 0
+
+
 class SimulateResponse(BaseModel):
     summary: str
     blocked_path_ids: list[str]
@@ -175,6 +199,9 @@ class SimulateResponse(BaseModel):
     time_to_breach_delta_minutes: Optional[int] = None
     baseline: Optional[AttackPathResponse] = None
     simulated: Optional[AttackPathResponse] = None
+    before: ValidationSummary = Field(default_factory=ValidationSummary)
+    after: ValidationSummary = Field(default_factory=ValidationSummary)
+    delta_summary: str = ""
 
 
 class ScanDiffResponse(BaseModel):

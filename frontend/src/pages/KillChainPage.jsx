@@ -42,6 +42,14 @@ function KillChainPage() {
     return <section className="page">Projecting attack chain...</section>;
   }
 
+  const pathConfidence = data.killChainSteps.find((s) => s.pathConfidence)?.pathConfidence || null;
+  const confidenceStyle = {
+    CONFIRMED: { color: "#86efac", bg: "rgba(34, 197, 94, 0.12)", border: "rgba(34, 197, 94, 0.4)", label: "TCP-verified end-to-end" },
+    PARTIAL:   { color: "#fbbf24", bg: "rgba(251, 191, 36, 0.12)", border: "rgba(251, 191, 36, 0.4)", label: "Partially reachable" },
+    UNVERIFIED:{ color: "#f87171", bg: "rgba(248, 113, 113, 0.12)", border: "rgba(248, 113, 113, 0.4)", label: "Unverified — lab unreachable" }
+  };
+  const pathBadge = pathConfidence ? confidenceStyle[pathConfidence] : null;
+
   return (
     <section className="page">
       <section className="hero-card page-intro">
@@ -58,6 +66,28 @@ function KillChainPage() {
       <div className="panel">
         <p className="eyebrow">Innovation layer</p>
         <h2>External exposure to internal impact</h2>
+        {pathBadge && (
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "8px",
+              marginBottom: "12px",
+              padding: "6px 12px",
+              borderRadius: "6px",
+              background: pathBadge.bg,
+              border: `1px solid ${pathBadge.border}`,
+              color: pathBadge.color,
+              fontSize: "0.8rem",
+              fontWeight: 600,
+              letterSpacing: "0.02em"
+            }}
+          >
+            <span>●</span>
+            <span>{pathConfidence}</span>
+            <span style={{ fontWeight: 400, opacity: 0.8 }}>— {pathBadge.label}</span>
+          </div>
+        )}
         <p className="section-copy">
           This page is where your demo differentiates itself: the frontend turns a list of exposed
           assets into a plausible business-impact narrative.
@@ -88,6 +118,24 @@ function KillChainPage() {
                   >
                     Why this hop? ({step.ruleId} → {step.technique})
                   </button>
+                )}
+                {step.probeSuccess !== undefined && step.probeSuccess !== null && (
+                  <span
+                    title={step.probeError || "TCP probe succeeded"}
+                    style={{
+                      marginLeft: "12px",
+                      fontSize: "0.7rem",
+                      color: step.probeSuccess ? "#86efac" : "#f87171",
+                      background: step.probeSuccess ? "rgba(34,197,94,0.1)" : "rgba(248,113,113,0.1)",
+                      border: `1px solid ${step.probeSuccess ? "rgba(34,197,94,0.35)" : "rgba(248,113,113,0.35)"}`,
+                      padding: "2px 8px",
+                      borderRadius: "4px",
+                      fontFamily: "monospace"
+                    }}
+                  >
+                    {step.probeSuccess ? "✓" : "✗"} :{step.probePort ?? "?"}
+                    {step.probeLatencyMs != null && ` ${step.probeLatencyMs.toFixed(1)}ms`}
+                  </span>
                 )}
                 {step.hasLlmRationale && (
                   <span

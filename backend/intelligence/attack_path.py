@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from backend.db.models import Asset, AttackPath, CVE, Scan
 
 from .graph_builder import INTERNET_NODE
+from .path_validator import PathValidator, summarize as summarize_validations
 
 
 def asset_label(asset: Asset) -> str:
@@ -388,6 +389,45 @@ def rank_paths(
         alternates=paths[1:],
         remediations=remediations,
     )
+
+
+async def validate_and_rerank(
+    paths: list[dict],
+    assets_by_id: dict[int, Asset],
+) -> tuple[list[dict], dict]:
+    """Attach validation to every path, re-rank so CONFIRMED > PARTIAL > UNVERIFIED.
+
+    Returns the re-ranked paths plus a summary dict for the WS event payload.
+    """
+    if not paths:
+        return paths, {"confirmed": 0, "partial": 0, "unverified": 0, "total": 0}
+    validator = PathValidator(assets_by_id)
+    ranked = await validator.validate_paths(paths)
+    return ranked, summarize_validations(ranked)
+
+
+async def rank_paths_validated(
+    scan: Scan,
+    g: nx.DiGraph,
+    limit: int = 8,
+    persona: Optional[str] = None,
+) -> tuple[Optional[PathResult], dict]:
+    paths = build_candidate_paths(scan, g, limit=limit, persona=persona)
+    if not paths:
+        return None, {"confirmed": 0, "partial": 0, "unverified": 0, "total": 0}
+    assets_by_id = {a.id: a for a in scan.assets}
+    paths, summary = await validate_and_rerank(paths, assets_by_id)
+    primary = paths[0]
+    remediations = build_remediation_candidates(paths)
+    return PathResult(
+        asset_ids=primary["asset_sequence"],
+        total_risk=primary["total_risk_score"],
+        narrative=narrate_primary(primary),
+        estimated_window=primary["estimated_window"],
+        primary_path=primary,
+        alternates=paths[1:],
+        remediations=remediations,
+    ), summary
 
 
 def compute_attack_path(db: Session, scan: Scan, g: nx.DiGraph) -> Optional[PathResult]:

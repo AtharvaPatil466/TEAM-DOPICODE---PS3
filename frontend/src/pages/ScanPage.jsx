@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { startScan, replayLatestDemo, connectLiveScan } from "../services/api";
 import { useNavigate } from "react-router-dom";
+import ValidationHUD from "../components/ValidationHUD";
 
 function ScanPage() {
   const [domain, setDomain] = useState("shadowtrace-demo.xyz");
@@ -13,6 +14,8 @@ function ScanPage() {
   const [events, setEvents] = useState([]);
   const [progress, setProgress] = useState(0);
   const [metrics, setMetrics] = useState({ assets: 0, cves: 0, portals: 0 });
+  const [validationPhase, setValidationPhase] = useState("idle");
+  const [validationSummary, setValidationSummary] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -23,6 +26,13 @@ function ScanPage() {
       onEvent: (event) => {
         if (event.type === "progress") {
           setProgress(event.payload.percent);
+          if (event.payload.phase === "attack_path") {
+            setValidationPhase("verifying");
+          }
+        } else if (event.type === "attack_path_computed") {
+          setValidationSummary(event.payload.validation_summary || null);
+          setValidationPhase("done");
+          setEvents(e => [`[${new Date(event.timestamp).toLocaleTimeString()}] Attack paths validated: ${(event.payload.validation_summary?.confirmed) ?? 0}/${(event.payload.validation_summary?.total) ?? 0} confirmed`, ...e]);
         } else if (event.type === "host_discovered") {
           setMetrics(m => ({ ...m, assets: m.assets + 1 }));
           setEvents(e => [`[${new Date(event.timestamp).toLocaleTimeString()}] Host discovered: ${event.payload.hostname || event.payload.ip}`, ...e]);
@@ -48,8 +58,10 @@ function ScanPage() {
     setEvents([]);
     setProgress(0);
     setMetrics({ assets: 0, cves: 0, portals: 0 });
+    setValidationPhase("idle");
+    setValidationSummary(null);
     setStatus("running");
-    
+
     try {
       await startScan({ domain, subnet, companySize, industrySector, processesPii });
     } catch (error) {
@@ -62,8 +74,10 @@ function ScanPage() {
     setEvents([]);
     setProgress(0);
     setMetrics({ assets: 0, cves: 0, portals: 0 });
+    setValidationPhase("idle");
+    setValidationSummary(null);
     setStatus("running");
-    
+
     try {
       await replayLatestDemo();
     } catch (error) {
@@ -156,6 +170,8 @@ function ScanPage() {
               </div>
             </div>
             
+            <ValidationHUD phase={validationPhase} summary={validationSummary} />
+
             <div className="event-panel">
               <p className="eyebrow" style={{marginBottom: "1rem"}}>Event Stream</p>
               <div className="event-list" style={{maxHeight: "200px", overflowY: "auto"}}>

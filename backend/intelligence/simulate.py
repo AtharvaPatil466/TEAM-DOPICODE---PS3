@@ -9,7 +9,7 @@ from typing import Iterable, Optional
 
 from backend.db.models import Asset, Scan
 
-from .attack_path import rank_paths, PathResult
+from .attack_path import rank_paths, rank_paths_validated, PathResult
 from .graph_builder import build_edges, to_networkx
 
 
@@ -52,6 +52,8 @@ class SimulationDelta:
     introduced_path_ids: list[str]
     time_to_breach_delta_minutes: Optional[int]
     summary: str
+    before_validation: dict
+    after_validation: dict
 
 
 def _path_id_set(result: Optional[PathResult]) -> set[str]:
@@ -69,7 +71,10 @@ def _time_to_breach_midpoint(result: Optional[PathResult]) -> Optional[int]:
     return (primary["estimated_minutes_low"] + primary["estimated_minutes_high"]) // 2
 
 
-def simulate_remediation(
+_EMPTY_VALIDATION = {"confirmed": 0, "partial": 0, "unverified": 0, "total": 0}
+
+
+async def simulate_remediation(
     scan: Scan,
     patched_asset_ids: Iterable[int],
     patched_cve_ids: Iterable[str],
@@ -77,12 +82,12 @@ def simulate_remediation(
 ) -> SimulationDelta:
     baseline_edges = build_edges(scan)
     baseline_graph = to_networkx(scan, baseline_edges)
-    baseline = rank_paths(scan, baseline_graph, persona=persona)
+    baseline, before_validation = await rank_paths_validated(scan, baseline_graph, persona=persona)
 
     view = _ScanView(scan, set(patched_asset_ids), {cve.upper() for cve in patched_cve_ids})
     sim_edges = build_edges(view)
     sim_graph = to_networkx(view, sim_edges)
-    simulated = rank_paths(view, sim_graph, persona=persona)
+    simulated, after_validation = await rank_paths_validated(view, sim_graph, persona=persona)
 
     baseline_ids = _path_id_set(baseline)
     simulated_ids = _path_id_set(simulated)
@@ -127,4 +132,6 @@ def simulate_remediation(
         introduced_path_ids=introduced,
         time_to_breach_delta_minutes=delta_minutes,
         summary=summary,
+        before_validation=before_validation or dict(_EMPTY_VALIDATION),
+        after_validation=after_validation or dict(_EMPTY_VALIDATION),
     )

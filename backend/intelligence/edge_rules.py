@@ -35,6 +35,9 @@ class EdgeRule:
     detection_probability: float
     compliance_controls: list[str]
     evaluate: Callable[[Optional[Asset], Asset, dict], Optional[RuleMatch]]
+    # TCP port probed by PathValidator to confirm this hop's reachability.
+    # Matches the service whose exposure the rule actually encodes.
+    probe_port: Optional[int] = None
 
 
 _AUTH_KEYWORDS = ("auth", "credential", "bypass", "login", "password", "session", "token")
@@ -408,47 +411,47 @@ RULES: list[EdgeRule] = [
     EdgeRule("NET-002", "Internet Reachability",
              "External asset is confirmed reachable from the public internet.",
              ["T1595", "T1590"], 0.10,
-             ["NIST AC-17", "CIS 12.2"], _net_002),
+             ["NIST AC-17", "CIS 12.2"], _net_002, probe_port=80),
     EdgeRule("MISC-001", "Exposed Admin Panel",
              "External asset exposes unauthenticated admin or login functionality.",
              ["T1190", "T1133"], 0.40,
-             ["PCI 1.2.1", "SOC2 CC6.1", "NIST AC-3"], _misc_001),
+             ["PCI 1.2.1", "SOC2 CC6.1", "NIST AC-3"], _misc_001, probe_port=80),
     EdgeRule("CONF-001", "Weak TLS Posture",
              "TLS certificate state weakens trust or enables interception scenarios.",
              ["T1557", "T1040"], 0.15,
-             ["PCI 4.1", "SOC2 CC6.7", "NIST SC-8"], _conf_001),
+             ["PCI 4.1", "SOC2 CC6.7", "NIST SC-8"], _conf_001, probe_port=443),
     EdgeRule("SUPPLY-001", "Outdated Dependency",
              "Fingerprinted software version is tied to known CVE exposure.",
              ["T1195.002"], 0.20,
-             ["NIST SI-2", "PCI 6.2", "SOC2 CC7.1"], _supply_001),
+             ["NIST SI-2", "PCI 6.2", "SOC2 CC7.1"], _supply_001, probe_port=80),
     EdgeRule("CLOUD-001", "Public Bucket Exposure",
              "Cloud object storage is publicly listable and exposes stored data directly.",
              ["T1530", "T1619"], 0.05,
-             ["SOC2 CC6.1", "NIST AC-3", "ISO 27001 A.9.4"], _cloud_001),
+             ["SOC2 CC6.1", "NIST AC-3", "ISO 27001 A.9.4"], _cloud_001, probe_port=443),
     EdgeRule("EXP-001", "Remote Exploit",
              "Service version has a high-severity network-exploitable CVE.",
              ["T1190", "T1210"], 0.75,
-             ["NIST SI-2", "NIST SI-4", "PCI 6.2"], _exp_001),
+             ["NIST SI-2", "NIST SI-4", "PCI 6.2"], _exp_001, probe_port=80),
     EdgeRule("CRED-001", "Credential Path",
              "Login surface exists, MFA indicators are absent, and an auth-related CVE exists.",
              ["T1078", "T1110", "T1556"], 0.35,
-             ["PCI 8.3.1", "SOC2 CC6.1", "NIST IA-2"], _cred_001),
+             ["PCI 8.3.1", "SOC2 CC6.1", "NIST IA-2"], _cred_001, probe_port=6379),
     EdgeRule("EXP-002", "Privilege Escalation",
              "Target has a local privilege-escalation CVE usable after subnet foothold.",
              ["T1068", "T1548"], 0.65,
-             ["NIST AC-6", "NIST SI-4"], _exp_002),
+             ["NIST AC-6", "NIST SI-4"], _exp_002, probe_port=22),
     EdgeRule("NET-001", "Lateral Reachability",
              "Source and target share a /24 and there is no segmentation evidence.",
              ["T1021", "T1570"], 0.25,
-             ["PCI 1.2", "NIST SC-7", "CIS 12.2"], _net_001),
+             ["PCI 1.2", "NIST SC-7", "CIS 12.2"], _net_001, probe_port=3306),
     EdgeRule("SHADOW-001", "Shadow Device Pivot",
              "Unmanaged device on the same subnet can move laterally toward the target.",
              ["T1200", "T1021"], 0.10,
-             ["NIST CM-8", "CIS 1.1", "SOC2 CC6.1"], _shadow_001),
+             ["NIST CM-8", "CIS 1.1", "SOC2 CC6.1"], _shadow_001, probe_port=22),
     EdgeRule("DATA-001", "Crown Jewel Access",
              "Compromised source can reach a designated crown-jewel asset.",
              ["T1213", "T1005", "T1041"], 0.55,
-             ["PCI 3.4", "SOC2 CC6.1", "NIST SC-7"], _data_001),
+             ["PCI 3.4", "SOC2 CC6.1", "NIST SC-7"], _data_001, probe_port=3306),
 ]
 
 RULES_BY_ID: dict[str, EdgeRule] = {rule.id: rule for rule in RULES}

@@ -269,6 +269,16 @@ def _hop_to_schema(hop: dict, asset: Asset | None) -> schemas.AttackPathHop:
     )
 
 
+def _validation_to_schema(raw: dict | None) -> schemas.PathValidation | None:
+    if not raw:
+        return None
+    return schemas.PathValidation(
+        validated=raw.get("validated", False),
+        confidence=raw.get("confidence", "UNVERIFIED"),
+        hop_results=[schemas.HopValidation(**hop) for hop in (raw.get("hop_results") or [])],
+    )
+
+
 def _candidate_to_schema(path: dict, assets_by_id: dict[int, Asset]) -> schemas.AttackPathCandidate:
     return schemas.AttackPathCandidate(
         path_id=path["path_id"],
@@ -276,6 +286,7 @@ def _candidate_to_schema(path: dict, assets_by_id: dict[int, Asset]) -> schemas.
         total_risk_score=path["total_risk_score"],
         estimated_window=path["estimated_window"],
         hops=[_hop_to_schema(hop, assets_by_id.get(hop["target_id"])) for hop in path["hops"]],
+        validation=_validation_to_schema(path.get("validation")),
     )
 
 
@@ -292,6 +303,7 @@ def _result_to_response(result, scan: Scan) -> schemas.AttackPathResponse:
         path_id=primary["path_id"],
         estimated_window=primary["estimated_window"],
         persona=primary.get("persona"),
+        validation=_validation_to_schema(primary.get("validation")),
         alternates=[_candidate_to_schema(p, assets_by_id) for p in result.alternates],
         remediation_candidates=[
             schemas.RemediationCandidate(
@@ -308,11 +320,11 @@ def _result_to_response(result, scan: Scan) -> schemas.AttackPathResponse:
 
 
 @app.get("/attack-path", response_model=schemas.AttackPathResponse)
-def attack_path(
+async def attack_path(
     persona: Optional[schemas.Persona] = Query(None, description="Attacker persona: script_kiddie | criminal | apt"),
     db: Session = Depends(get_db),
 ) -> schemas.AttackPathResponse:
-    from backend.intelligence.attack_path import rank_paths
+    from backend.intelligence.attack_path import rank_paths_validated
     from backend.intelligence.graph_builder import build_edges, to_networkx
 
     scan = _latest_scan(db)
@@ -320,25 +332,38 @@ def attack_path(
         return schemas.AttackPathResponse(hops=[], total_risk_score=0.0, narrative="No attack path computed yet.")
     edges = build_edges(scan)
     graph = to_networkx(scan, edges)
-    result = rank_paths(scan, graph, persona=persona)
+    result, _summary = await rank_paths_validated(scan, graph, persona=persona)
     return _result_to_response(result, scan)
 
 
 @app.post("/attack-path/simulate", response_model=schemas.SimulateResponse)
-def attack_path_simulate(
+async def attack_path_simulate(
     req: schemas.SimulateRequest,
     db: Session = Depends(get_db),
 ) -> schemas.SimulateResponse:
     from backend.intelligence.simulate import simulate_remediation
+    from backend.intelligence.delta_narrator import narrate_simulation_delta
 
     scan = _latest_scan(db)
     if scan is None:
         raise HTTPException(404, "no scans available")
-    delta = simulate_remediation(
+    delta = await simulate_remediation(
         scan,
         req.patched_asset_ids,
         req.patched_cve_ids,
         persona=req.persona,
+    )
+    patched_labels = [
+        (a.hostname or a.ip_address or f"asset-{a.id}")
+        for a in scan.assets
+        if a.id in set(req.patched_asset_ids or [])
+    ]
+    delta_summary = await narrate_simulation_delta(
+        patched_labels=patched_labels,
+        patched_cves=list(req.patched_cve_ids or []),
+        before=delta.before_validation,
+        after=delta.after_validation,
+        blocked_path_ids=delta.blocked_path_ids,
     )
     return schemas.SimulateResponse(
         summary=delta.summary,
@@ -347,6 +372,9 @@ def attack_path_simulate(
         time_to_breach_delta_minutes=delta.time_to_breach_delta_minutes,
         baseline=_result_to_response(delta.baseline, scan),
         simulated=_result_to_response(delta.simulated, scan),
+        before=schemas.ValidationSummary(**delta.before_validation),
+        after=schemas.ValidationSummary(**delta.after_validation),
+        delta_summary=delta_summary,
     )
 
 
@@ -461,19 +489,38 @@ def impact(db: Session = Depends(get_db)) -> schemas.ImpactResponse:
     )
 
 
+def _normalize_scenario_hop(hop: dict) -> dict:
+    if "asset_id" in hop and "label" in hop:
+        return hop
+    out = dict(hop)
+    out.setdefault("asset_id", hop.get("target_id") or hop.get("asset_id") or 0)
+    out.setdefault("label", hop.get("target_label") or hop.get("label") or "unknown")
+    out.setdefault("vulnerability", hop.get("cve_id"))
+    return out
+
+
+def _normalize_scenario(scenario: dict) -> dict:
+    out = dict(scenario)
+    out["paths"] = [
+        {**p, "hops": [_normalize_scenario_hop(h) for h in (p.get("hops") or [])]}
+        for p in (scenario.get("paths") or [])
+    ]
+    return out
+
+
 @app.get("/impact/scenarios", response_model=schemas.ScenarioMatrixResponse)
 def impact_scenarios(db: Session = Depends(get_db)) -> schemas.ScenarioMatrixResponse:
     scan = _latest_scan(db)
     if scan is None:
         raise HTTPException(404, "no scans available")
-        
+
     report = db.query(ImpactReport).filter(ImpactReport.scan_id == scan.id).order_by(desc(ImpactReport.id)).first()
     if not report:
         raise HTTPException(404, "no impact report available for latest scan")
-        
-    scenarios = report.scenario_matrix or []
+
+    scenarios = [_normalize_scenario(s) for s in (report.scenario_matrix or [])]
     total_paths = sum(s.get("path_count", 0) for s in scenarios)
-    
+
     return schemas.ScenarioMatrixResponse(
         scan_id=scan.id,
         total_paths=total_paths,

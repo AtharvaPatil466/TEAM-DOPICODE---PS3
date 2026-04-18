@@ -1,6 +1,35 @@
 import { useEffect, useState } from "react";
 import { fetchDashboardData, fetchSimulate } from "../services/api";
 
+function ValidationCard({ title, summary, highlight }) {
+  const s = summary || { confirmed: 0, partial: 0, unverified: 0, total: 0 };
+  return (
+    <div
+      style={{
+        border: `1px solid ${highlight ? "#22c55e" : "#1f3a5c"}`,
+        borderRadius: "10px",
+        padding: "1rem 1.25rem",
+        background: highlight ? "rgba(34,197,94,0.08)" : "rgba(11,18,32,0.5)"
+      }}
+    >
+      <p className="eyebrow" style={{ margin: 0 }}>
+        {title}
+      </p>
+      <div style={{ display: "flex", alignItems: "baseline", gap: "0.5rem", marginTop: "0.35rem" }}>
+        <strong style={{ fontSize: "1.6rem", color: "#e6f0ff" }}>{s.total}</strong>
+        <span style={{ color: "#93a3b8" }}>path{s.total === 1 ? "" : "s"}</span>
+      </div>
+      <div style={{ marginTop: "0.5rem", fontFamily: "monospace", fontSize: "0.85rem" }}>
+        <span style={{ color: "#22c55e" }}>{s.confirmed} CONFIRMED</span>
+        <br />
+        <span style={{ color: "#fbbf24" }}>{s.partial} PARTIAL</span>
+        <br />
+        <span style={{ color: "#6b7280" }}>{s.unverified} UNVERIFIED</span>
+      </div>
+    </div>
+  );
+}
+
 function SimulatePage() {
   const [data, setData] = useState(null);
   const [selectedAssets, setSelectedAssets] = useState([]);
@@ -153,6 +182,38 @@ function SimulatePage() {
         <div className="panel" style={{ borderColor: "var(--accent)" }}>
           <p className="eyebrow">Simulation results</p>
           <h2 style={{ fontSize: "1.8rem" }}>{result.summary}</h2>
+
+          {(result.before || result.after) && (
+            <div style={{ marginTop: "1.25rem" }}>
+              <p className="eyebrow">Path validation — before vs. after</p>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr auto 1fr",
+                  alignItems: "center",
+                  gap: "1rem",
+                  marginTop: "0.75rem"
+                }}
+              >
+                <ValidationCard title="Before patch" summary={result.before} />
+                <span style={{ fontSize: "1.5rem", color: "#93a3b8" }}>→</span>
+                <ValidationCard title="After patch" summary={result.after} highlight />
+              </div>
+              {result.delta_summary && (
+                <p
+                  style={{
+                    marginTop: "1rem",
+                    fontWeight: 600,
+                    fontSize: "1rem",
+                    color: "#e6f0ff",
+                    lineHeight: 1.5
+                  }}
+                >
+                  {result.delta_summary}
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="metric-grid" style={{ marginTop: "1.25rem", gridTemplateColumns: "repeat(3, 1fr)" }}>
             <div className="metric-card">

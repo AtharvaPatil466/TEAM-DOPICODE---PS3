@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from backend.config import LAB_CROWN_JEWEL, LAB_ENTRY_HOST, SCAN_IGNORE_IPS
 from backend.db import SessionLocal
-from backend.db.models import Asset, CVE, Port, Scan
+from backend.db.models import Asset, AttackPath, CVE, Port, Scan
 from backend.api.events import bus
 
 from backend.scanner.subdomain import enumerate_subdomains
@@ -22,7 +22,7 @@ from backend.scanner import nmap_scanner
 from backend.intelligence.cve_fetcher import fetch_cves
 from backend.intelligence.risk_scorer import RiskInput, score as risk_score
 from backend.intelligence.graph_builder import build_edges, persist_edges, to_networkx
-from backend.intelligence.attack_path import compute_attack_path
+from backend.intelligence.attack_path import rank_paths_validated
 from backend.intelligence.anomaly import get_detector
 
 log = logging.getLogger(__name__)
@@ -360,12 +360,21 @@ async def _graph_phase(db: Session, scan: Scan) -> None:
     g = to_networkx(scan, edges)
 
     await _emit_progress(scan.id, db, scan, "attack_path", 95)
-    result = compute_attack_path(db, scan, g)
+    result, validation_summary = await rank_paths_validated(scan, g)
     if result is not None:
+        db.query(AttackPath).filter(AttackPath.scan_id == scan.id).delete()
+        db.add(AttackPath(
+            scan_id=scan.id,
+            asset_sequence=result.asset_ids,
+            total_risk_score=result.total_risk,
+            narrative=result.narrative,
+        ))
+        db.commit()
         await bus.publish("attack_path_computed", {
             "hops": result.asset_ids,
             "total_risk": result.total_risk,
             "narrative": result.narrative,
+            "validation_summary": validation_summary,
         }, scan.id)
 
 
