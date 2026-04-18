@@ -181,6 +181,24 @@ def _supply_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMat
     )
 
 
+def _cloud_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch]:
+    if src is not None or dst.asset_type != "storage":
+        return None
+    meta = dst.tech_stack or {}
+    if meta.get("issue") != "public_listing":
+        return None
+    sample_files = ", ".join((meta.get("sample_files") or [])[:3])
+    sample_hint = f" Sample objects include {sample_files}." if sample_files else ""
+    bucket_name = meta.get("bucket_name") or _label(dst)
+    return RuleMatch(
+        "CLOUD-001",
+        "Public Bucket Exposure",
+        "public_bucket",
+        f"{bucket_name} allows unauthenticated object listing and direct data exposure.{sample_hint}",
+        weight_modifier=0.4,
+    )
+
+
 def _exp_001(src: Optional[Asset], dst: Asset, ctx: dict) -> Optional[RuleMatch]:
     cve = _remote_exploit_cve(dst)
     if cve is None:
@@ -281,6 +299,8 @@ RULES: list[EdgeRule] = [
              "TLS certificate state weakens trust or enables interception scenarios.", _conf_001),
     EdgeRule("SUPPLY-001", "Outdated Dependency",
              "Fingerprinted software version is tied to known CVE exposure.", _supply_001),
+    EdgeRule("CLOUD-001", "Public Bucket Exposure",
+             "Cloud object storage is publicly listable and exposes stored data directly.", _cloud_001),
     EdgeRule("EXP-001", "Remote Exploit",
              "Service version has a high-severity network-exploitable CVE.", _exp_001),
     EdgeRule("CRED-001", "Credential Path",

@@ -32,7 +32,11 @@ def _pick_entry_and_target(g: nx.DiGraph, scan: Scan) -> tuple[int | None, int |
         target = max(crowns, key=lambda a: a.risk_score or 0).id
     else:
         internals = [a for a in scan.assets if a.exposure == "internal"]
-        target = max(internals, key=lambda a: a.risk_score or 0).id if internals else None
+        if internals:
+            target = max(internals, key=lambda a: a.risk_score or 0).id
+        else:
+            externals = [a for a in scan.assets if a.exposure == "external"]
+            target = max(externals, key=lambda a: a.risk_score or 0).id if externals else None
     return entry, target
 
 
@@ -54,9 +58,11 @@ def _narrate(scan: Scan, g: nx.DiGraph, path: list[int]) -> str:
         edge = g.get_edge_data(prev, aid, default={}) if prev is not None else {}
         rule_id = edge.get("rule_id")
         relationship = edge.get("relationship")
-        if prev == INTERNET_NODE:
+        if prev == INTERNET_NODE and i == len(path) - 1:
+            action = "Objective"
+        elif prev == INTERNET_NODE:
             action = "Initial access"
-        elif a.is_crown_jewel:
+        elif a.is_crown_jewel or i == len(path) - 1:
             action = "Objective"
         else:
             action = "Pivot"

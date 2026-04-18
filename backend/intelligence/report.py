@@ -72,7 +72,11 @@ def _pick_entry_and_target(g: nx.DiGraph, scan: Scan) -> tuple[int | None, int |
         target = max(crowns, key=lambda asset: asset.risk_score or 0).id
     else:
         internals = [asset for asset in scan.assets if asset.exposure == "internal"]
-        target = max(internals, key=lambda asset: asset.risk_score or 0).id if internals else None
+        if internals:
+            target = max(internals, key=lambda asset: asset.risk_score or 0).id
+        else:
+            externals = [asset for asset in scan.assets if asset.exposure == "external"]
+            target = max(externals, key=lambda asset: asset.risk_score or 0).id if externals else None
     return entry, target
 
 
@@ -82,6 +86,7 @@ def _estimate_hop_minutes(cve: CVE | None, relationship: str | None) -> tuple[in
             "internet_reachable": (45, 120),
             "admin_exposure": (30, 90),
             "credential_access": (45, 180),
+            "public_bucket": (15, 45),
             "lateral_move": (60, 180),
             "shadow_pivot": (45, 120),
             "crown_jewel_access": (60, 180),
@@ -324,7 +329,7 @@ def _fallback_assessment(paths: list[dict], remediations: list[dict]) -> str:
     )
     return (
         f"Most likely path: {_path_sentence(primary)}. This route has the lowest effective resistance in the graph "
-        f"and strings together the cleanest exploit path into the crown jewel.\n\n"
+        f"and strings together the cleanest exploit path into the highest-impact objective in scope.\n\n"
         f"Time to breach: A realistic operator could move from initial access to impact in "
         f"{primary['estimated_window']}. The slowest step is {slowest_hop['target_label']} under "
         f"{slowest_hop.get('rule_id') or slowest_hop.get('relationship')} because its exploit window alone is "
