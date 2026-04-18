@@ -1,31 +1,510 @@
-import {
-  findingRows,
-  graphEdges,
-  graphNodes,
-  killChainSteps,
-  narrative,
-  nodeDetails,
-  reportSections,
-  summaryMetrics,
-  topActions
-} from "../data/mockData";
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+const WS_BASE = API_BASE.replace(/^http/, "ws");
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const severityOrder = {
+  Critical: 0,
+  High: 1,
+  Medium: 2,
+  Neutral: 3
+};
 
-export async function fetchDashboardData() {
-  await delay(180);
+function assetLabel(asset) {
+  return asset?.hostname || asset?.ip || `asset-${asset?.id || "unknown"}`;
+}
+
+function riskSeverity(score = 0) {
+  if (score >= 80) {
+    return "Critical";
+  }
+  if (score >= 60) {
+    return "High";
+  }
+  if (score >= 30) {
+    return "Medium";
+  }
+  return "Neutral";
+}
+
+function graphSeverity(level) {
+  switch (level) {
+    case "critical":
+      return "Critical";
+    case "high":
+      return "High";
+    case "medium":
+      return "Medium";
+    default:
+      return "Neutral";
+  }
+}
+
+function shortType(type) {
+  switch (type) {
+    case "internet":
+      return "net";
+    case "storage":
+      return "s3";
+    case "workstation":
+      return "ws";
+    default:
+      return (type || "asset").slice(0, 6);
+  }
+}
+
+function typeLabel(type) {
+  switch (type) {
+    case "api":
+      return "API";
+    case "db":
+      return "Database";
+    case "iot":
+      return "IoT";
+    case "web":
+      return "Web app";
+    case "storage":
+      return "S3 bucket";
+    case "internet":
+      return "Internet";
+    default:
+      return type || "Asset";
+  }
+}
+
+function topCve(asset) {
+  return [...(asset?.cves || [])].sort((left, right) => (right.cvss || 0) - (left.cvss || 0))[0] || null;
+}
+
+function describeTls(sslInfo) {
+  if (!sslInfo) {
+    return null;
+  }
+  if (sslInfo.expired) {
+    return "Certificate is expired.";
+  }
+  if (sslInfo.self_signed) {
+    return "Certificate is self-signed.";
+  }
+  if (sslInfo.hostname_match === false) {
+    return "Certificate hostname does not match the exposed service.";
+  }
+  if (sslInfo.expiring_soon) {
+    return "Certificate is close to expiry.";
+  }
+  return null;
+}
+
+function summarizeExposure(asset) {
+  const tech = asset.tech_stack || {};
+  const tlsIssue = describeTls(asset.ssl_info);
+  const adminPanels = asset.admin_panels || [];
+  const exposedPanels = adminPanels.filter((panel) => !panel.auth);
+  const strongest = topCve(asset);
+
+  if (asset.asset_type === "storage" && tech.issue === "public_listing") {
+    const files = (tech.sample_files || []).slice(0, 3).join(", ");
+    return {
+      kind: "S3 bucket",
+      reason: `Public object listing exposes ${files}.`,
+      action: tech.remediation_summary || "Disable public listing and rotate any exposed keys immediately."
+    };
+  }
+
+  if (exposedPanels.length > 0) {
+    const paths = exposedPanels.slice(0, 2).map((panel) => panel.path).join(", ");
+    return {
+      kind: "Admin surface",
+      reason: `Unauthenticated panel exposure at ${paths}.`,
+      action: tech.remediation_summary || "Move the admin surface behind VPN or IP allowlists."
+    };
+  }
+
+  if (strongest) {
+    return {
+      kind: "Known CVE",
+      reason: `${strongest.cve_id}${strongest.cvss ? ` (CVSS ${strongest.cvss})` : ""} is mapped to this asset.`,
+      action: strongest.remediation || tech.remediation_summary || "Patch the affected service to a fixed version."
+    };
+  }
+
+  if (tlsIssue) {
+    return {
+      kind: "TLS posture",
+      reason: tlsIssue,
+      action: tech.remediation_summary || "Replace the certificate with a trusted cert that matches the host."
+    };
+  }
 
   return {
-    summaryMetrics,
-    narrative,
-    topActions,
-    findingRows,
-    graph: {
-      nodes: graphNodes,
-      edges: graphEdges
-    },
-    nodeDetails,
-    killChainSteps,
-    reportSections
+    kind: typeLabel(asset.asset_type),
+    reason: tech.issue_summary || "This host broadens the public attack surface and needs ownership review.",
+    action: tech.remediation_summary || "Reduce exposure and assign an owning team."
   };
+}
+
+function buildFindingRows(assets) {
+  return [...assets]
+    .sort((left, right) => (right.risk_score || 0) - (left.risk_score || 0))
+    .map((asset, index) => {
+      const exposure = summarizeExposure(asset);
+      return {
+        id: `F-${String(101 + index)}`,
+        asset: assetLabel(asset),
+        kind: exposure.kind,
+        severity: riskSeverity(asset.risk_score),
+        reason: exposure.reason,
+        action: exposure.action
+      };
+    });
+}
+
+function buildTopActions(findingRows) {
+  return findingRows.slice(0, 3).map((row) => ({
+    title: `${row.asset}: ${row.kind}`,
+    detail: row.action
+  }));
+}
+
+function layoutRow(nodes, y) {
+  if (!nodes.length) {
+    return [];
+  }
+  const gap = 720 / (nodes.length + 1);
+  return nodes.map((node, index) => ({
+    ...node,
+    x: Math.round(gap * (index + 1)),
+    y
+  }));
+}
+
+function buildGraphModel(graph, assetsById) {
+  const internetNode = graph.nodes.find((node) => node.id === 0);
+  const assetNodes = graph.nodes.filter((node) => node.id !== 0);
+
+  const externalNodes = [];
+  const storageNodes = [];
+  const internalNodes = [];
+
+  assetNodes.forEach((node) => {
+    const asset = assetsById[node.id];
+    if (!asset) {
+      return;
+    }
+    if (asset.exposure === "internal") {
+      internalNodes.push(node);
+    } else if (asset.asset_type === "storage") {
+      storageNodes.push(node);
+    } else {
+      externalNodes.push(node);
+    }
+  });
+
+  const laidOutNodes = [];
+  if (internetNode) {
+    laidOutNodes.push({
+      ...internetNode,
+      x: 360,
+      y: 70,
+      severity: "Neutral",
+      type: "net"
+    });
+  }
+
+  const sortByRisk = (left, right) => {
+    const leftAsset = assetsById[left.id];
+    const rightAsset = assetsById[right.id];
+    return (rightAsset?.risk_score || 0) - (leftAsset?.risk_score || 0);
+  };
+
+  layoutRow([...externalNodes].sort(sortByRisk), 185).forEach((node) => {
+    laidOutNodes.push({
+      ...node,
+      severity: graphSeverity(node.risk_level),
+      type: shortType(node.asset_type)
+    });
+  });
+
+  layoutRow([...storageNodes].sort(sortByRisk), 320).forEach((node) => {
+    laidOutNodes.push({
+      ...node,
+      severity: graphSeverity(node.risk_level),
+      type: shortType(node.asset_type)
+    });
+  });
+
+  layoutRow([...internalNodes].sort(sortByRisk), 420).forEach((node) => {
+    laidOutNodes.push({
+      ...node,
+      severity: graphSeverity(node.risk_level),
+      type: shortType(node.asset_type)
+    });
+  });
+
+  return {
+    nodes: laidOutNodes,
+    edges: graph.edges.map((edge) => ({
+      from: edge.source,
+      to: edge.target,
+      relationship: edge.relationship,
+      rationale: edge.rationale,
+      ruleId: edge.rule_id
+    }))
+  };
+}
+
+function buildNodeDetails(graphModel, assetsById, latestScan) {
+  const details = {
+    0: {
+      title: "Public internet",
+      summary: `Replay entry point for ${latestScan.domain}. The cached demo starts here every time.`,
+      bullets: [
+        `${latestScan.total_assets} seeded findings in scope`,
+        latestScan.internal_scope ? "Internal pivot layer enabled" : "External-only scope seeded by default",
+        "WebSocket replay is deterministic and served from SQLite"
+      ]
+    }
+  };
+
+  graphModel.nodes.forEach((node) => {
+    if (node.id === 0) {
+      return;
+    }
+    const asset = assetsById[node.id];
+    if (!asset) {
+      return;
+    }
+    const strongest = topCve(asset);
+    const bullets = [
+      `${riskSeverity(asset.risk_score)} risk score ${asset.risk_score.toFixed(1)}`,
+      `${asset.cves.length} mapped CVE${asset.cves.length === 1 ? "" : "s"}`,
+      asset.exposure === "internal" ? "Internal impact layer" : "Internet-facing"
+    ];
+    const summaryParts = [];
+    if (asset.tech_stack?.issue_summary) {
+      summaryParts.push(asset.tech_stack.issue_summary);
+    }
+    if (strongest) {
+      summaryParts.push(`${strongest.cve_id}${strongest.cvss ? ` (CVSS ${strongest.cvss})` : ""} is the highest-value exploit on this asset.`);
+    }
+    if (!summaryParts.length) {
+      summaryParts.push(`${assetLabel(asset)} is part of the seeded attack surface and contributes to overall exposure.`);
+    }
+    details[node.id] = {
+      title: assetLabel(asset),
+      summary: summaryParts.join(" "),
+      bullets
+    };
+  });
+
+  return details;
+}
+
+function buildKillChainSteps(attackPath, assetsById, latestScan) {
+  const steps = [
+    {
+      title: "External discovery",
+      summary: `The replay starts from ${latestScan.domain} and walks the ${latestScan.total_assets}-asset cached surface in deterministic order.`
+    }
+  ];
+
+  if (!attackPath.hops.length) {
+    steps.push({
+      title: "Priority exposure",
+      summary: "No full attack path is cached for this scan, so the demo falls back to the highest-risk public finding."
+    });
+    return steps;
+  }
+
+  attackPath.hops.forEach((hop, index) => {
+    const asset = assetsById[hop.asset_id];
+    const exposure = asset ? summarizeExposure(asset) : null;
+    steps.push({
+      title: index === attackPath.hops.length - 1 ? "Objective reached" : `Hop ${index + 1}`,
+      summary: exposure
+        ? `${assetLabel(asset)} becomes the next step because ${exposure.reason.toLowerCase()}`
+        : `${hop.label} is included in the cached attack path.`
+    });
+  });
+
+  const finalHop = attackPath.hops[attackPath.hops.length - 1];
+  const finalAsset = assetsById[finalHop.asset_id];
+  if (finalAsset?.asset_type === "storage") {
+    const files = (finalAsset.tech_stack?.sample_files || []).slice(0, 3).join(", ");
+    steps.push({
+      title: "Data exposure",
+      summary: `The path terminates at a public bucket where ${files} are directly listable without authentication.`
+    });
+  }
+
+  return steps.slice(0, 4);
+}
+
+function buildReportSections(latestScan, findingRows, attackPath) {
+  const criticalCount = findingRows.filter((row) => row.severity === "Critical").length;
+  const lead = findingRows[0];
+  return [
+    {
+      heading: "Executive summary",
+      body: `${latestScan.domain} is running as a cached ${latestScan.internal_scope ? "external plus internal" : "external-only"} demo with ${latestScan.total_assets} assets and ${criticalCount} critical findings.`
+    },
+    {
+      heading: "Critical exposures",
+      body: lead
+        ? `${lead.asset} is the highest-priority issue because ${lead.reason.toLowerCase()}`
+        : "No prioritized findings are cached yet."
+    },
+    {
+      heading: "Modeled attack path",
+      body: attackPath.narrative || "No attack path narrative has been computed for the current cached scan."
+    },
+    {
+      heading: "Recommended next steps",
+      body: findingRows.slice(0, 3).map((row) => row.action).join(" ")
+    }
+  ];
+}
+
+function buildNarrative(latestScan, attackPath, findingRows) {
+  if (attackPath.narrative) {
+    return attackPath.narrative;
+  }
+  if (findingRows[0]) {
+    return `${latestScan.domain} is currently dominated by ${findingRows[0].asset}, which is the highest-risk public finding in the cached demo.`;
+  }
+  return `No cached scan is available for ${latestScan.domain}.`;
+}
+
+function buildEmptyDashboard(message) {
+  return {
+    latestScan: null,
+    summaryMetrics: [
+      { label: "Exposed assets", value: "0", tone: "neutral" },
+      { label: "Critical findings", value: "0", tone: "neutral" },
+      { label: "Misconfigured storage", value: "0", tone: "neutral" },
+      { label: "Executive risk", value: "0.0 / 10", tone: "neutral" }
+    ],
+    narrative: message,
+    topActions: [],
+    findingRows: [],
+    graph: { nodes: [], edges: [] },
+    nodeDetails: {},
+    killChainSteps: [
+      {
+        title: "Seed the demo",
+        summary: "Run the backend seed script so the UI has deterministic scan data to render."
+      }
+    ],
+    reportSections: [
+      {
+        heading: "Demo status",
+        body: message
+      }
+    ]
+  };
+}
+
+async function fetchJson(path, options = {}) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {})
+    }
+  });
+
+  if (!response.ok) {
+    const error = new Error(`Request failed for ${path} with ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    return response.json();
+  }
+  return response.text();
+}
+
+export async function fetchLatestScan() {
+  try {
+    return await fetchJson("/scan/latest");
+  } catch (error) {
+    if (error.status === 404) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+export function connectLiveScan({ onOpen, onEvent, onClose, onError }) {
+  const socket = new WebSocket(`${WS_BASE}/scan/live`);
+  socket.addEventListener("open", () => onOpen?.(socket));
+  socket.addEventListener("message", (event) => {
+    try {
+      onEvent?.(JSON.parse(event.data));
+    } catch (error) {
+      onError?.(error);
+    }
+  });
+  socket.addEventListener("close", () => onClose?.());
+  socket.addEventListener("error", (event) => onError?.(event));
+  return socket;
+}
+
+export async function replayLatestDemo() {
+  return fetchJson("/demo/replay/latest", { method: "POST" });
+}
+
+export function reportPdfUrl() {
+  return `${API_BASE}/report/pdf`;
+}
+
+export async function fetchDashboardData() {
+  try {
+    const latestScan = await fetchLatestScan();
+    if (!latestScan) {
+      return buildEmptyDashboard("No cached demo scan found. Run `python -m backend.scripts.seed_demo` first.");
+    }
+
+    const [assetSummaries, graph, attackPath] = await Promise.all([
+      fetchJson("/assets"),
+      fetchJson("/graph"),
+      fetchJson("/attack-path")
+    ]);
+    const assets = await Promise.all(assetSummaries.map((asset) => fetchJson(`/asset/${asset.id}`)));
+    const assetsById = Object.fromEntries(assets.map((asset) => [asset.id, asset]));
+    const findingRows = buildFindingRows(assets).sort(
+      (left, right) => severityOrder[left.severity] - severityOrder[right.severity]
+    );
+    const graphModel = buildGraphModel(graph, assetsById);
+    const storageFindings = assets.filter((asset) => asset.asset_type === "storage").length;
+    const maxRisk = Math.max(...assets.map((asset) => asset.risk_score || 0), 0);
+
+    return {
+      latestScan,
+      summaryMetrics: [
+        { label: "Exposed assets", value: String(latestScan.total_assets), tone: "neutral" },
+        {
+          label: "Critical findings",
+          value: String(findingRows.filter((row) => row.severity === "Critical").length),
+          tone: "critical"
+        },
+        {
+          label: "Misconfigured storage",
+          value: String(storageFindings),
+          tone: storageFindings ? "warning" : "neutral"
+        },
+        { label: "Executive risk", value: `${(maxRisk / 10).toFixed(1)} / 10`, tone: "critical" }
+      ],
+      narrative: buildNarrative(latestScan, attackPath, findingRows),
+      topActions: buildTopActions(findingRows),
+      findingRows,
+      graph: graphModel,
+      nodeDetails: buildNodeDetails(graphModel, assetsById, latestScan),
+      killChainSteps: buildKillChainSteps(attackPath, assetsById, latestScan),
+      reportSections: buildReportSections(latestScan, findingRows, attackPath)
+    };
+  } catch (error) {
+    console.error(error);
+    return buildEmptyDashboard("The frontend could not reach the backend demo API. Start the API and seed a cached scan.");
+  }
 }
