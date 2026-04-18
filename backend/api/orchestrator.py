@@ -23,6 +23,7 @@ from backend.intelligence.cve_fetcher import fetch_cves
 from backend.intelligence.risk_scorer import RiskInput, score as risk_score
 from backend.intelligence.graph_builder import build_edges, persist_edges, to_networkx
 from backend.intelligence.attack_path import compute_attack_path
+from backend.intelligence.anomaly import get_detector
 
 log = logging.getLogger(__name__)
 
@@ -289,6 +290,27 @@ async def run_scan(scan_id: int, domain: str, subnet: str | None) -> None:
 
         external = await _external_phase(db, scan)
         internal = await _internal_phase(db, scan) if subnet else []
+
+        if internal:
+            await _emit_progress(scan_id, db, scan, "anomaly_classify", 85)
+            try:
+                results = get_detector().classify(internal)
+                for r in results:
+                    if not r.is_shadow:
+                        continue
+                    asset = db.get(Asset, r.asset_id)
+                    if asset is None:
+                        continue
+                    asset.is_shadow_device = True
+                    await bus.publish("shadow_device_detected", {
+                        "asset_id": r.asset_id,
+                        "ip": asset.ip_address,
+                        "score": r.score,
+                    }, scan_id)
+                db.commit()
+            except Exception as e:
+                log.warning("anomaly classify failed: %s", e)
+
         scan.total_assets = len(external) + len(internal)
         scan.total_cves = sum(len(a.cves) for a in external + internal)
         db.commit()
