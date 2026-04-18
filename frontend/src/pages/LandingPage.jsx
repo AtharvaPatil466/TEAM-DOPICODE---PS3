@@ -253,7 +253,7 @@ function LandingPage() {
       e.preventDefault();
       const trimmed = domain.trim();
       if (!trimmed) return;
-      navigate(`/app/scan?domain=${encodeURIComponent(trimmed)}`);
+      navigate(`/scan?domain=${encodeURIComponent(trimmed)}`);
     },
     [domain, navigate]
   );

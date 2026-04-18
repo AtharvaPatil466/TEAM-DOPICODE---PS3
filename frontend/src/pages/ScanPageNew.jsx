@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import "../styles/brand.css";
+import { SkeletonCard, ScanningDot, ProgressBar } from "../components/LoadingStates";
 
-const API = "http://localhost:8000";
-const WS_BASE = "ws://localhost:8000";
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
+
+function resolveWsBase() {
+  if (/^https?:/i.test(API_BASE)) return API_BASE.replace(/^http/i, "ws");
+  if (typeof window === "undefined") return API_BASE;
+  const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${scheme}://${window.location.host}${API_BASE}`;
+}
+const WS_BASE = resolveWsBase();
 
 /* ── Severity config ── */
 const SEV = {
@@ -269,7 +276,7 @@ function ScanPage() {
         if (d.total_cves) setCveCount(d.total_cves);
         setTimeout(() => {
           if (mountedRef.current) {
-            navigate(`/app/results/${scanId || "latest"}`);
+            navigate("/overview");
           }
         }, 1500);
       }
@@ -286,7 +293,7 @@ function ScanPage() {
     setStatusMsg("Loading preloaded demo data...");
 
     try {
-      const res = await fetch(`${API}/demo/replay/latest`, { method: "POST" });
+      const res = await fetch(`${API_BASE}/demo/replay/latest`, { method: "POST" });
       if (!res.ok) throw new Error("fallback failed");
       /* The replay endpoint emits events over WebSocket, but if WS is dead
          we stagger the summary as fake events */
@@ -343,7 +350,7 @@ function ScanPage() {
     async function init() {
       /* 1. POST to create scan */
       try {
-        const res = await fetch(`${API}/scan/start`, {
+        const res = await fetch(`${API_BASE}/scan/start`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -402,7 +409,7 @@ function ScanPage() {
         pollRef.current = setInterval(async () => {
           if (cancelled) return;
           try {
-            const r = await fetch(`${API}/scan/status/${id}`);
+            const r = await fetch(`${API_BASE}/scan/status/${id}`);
             if (!r.ok) return;
             const s = await r.json();
             if (cancelled) return;
@@ -454,24 +461,13 @@ function ScanPage() {
     <div style={S.page}>
       {/* ── TOP BAR ── */}
       <div style={S.topBar}>
-        <span
-          style={{
-            width: 8,
-            height: 8,
-            background: "var(--color-accent-cyan, #00B4D8)",
-            display: "inline-block",
-            animation: "pulseDot 1s ease-in-out infinite",
-            flexShrink: 0,
-          }}
-        />
+        <ScanningDot />
         <span style={S.topTitle}>Scanning {domain}...</span>
       </div>
 
       {/* ── PROGRESS ── */}
       <div>
-        <div style={S.progressOuter}>
-          <div style={{ ...S.progressFill, width: `${progress}%` }} />
-        </div>
+        <ProgressBar value={progress} color="red" />
         <p style={S.statusMsg}>{statusMsg}</p>
         <div style={S.counters}>
           <div style={S.counter}>
@@ -523,16 +519,10 @@ function ScanPage() {
           })}
 
           {events.length === 0 && (
-            <p
-              style={{
-                textAlign: "center",
-                color: "var(--color-text-muted, #5C7A96)",
-                fontSize: "var(--text-body, 0.875rem)",
-                padding: "var(--space-8, 32px)",
-              }}
-            >
-              Waiting for scan events...
-            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3, 12px)", padding: "var(--space-4, 16px)" }}>
+              <SkeletonCard />
+              <SkeletonCard />
+            </div>
           )}
         </div>
       </div>

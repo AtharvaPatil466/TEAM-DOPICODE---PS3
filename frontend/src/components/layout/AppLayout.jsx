@@ -1,7 +1,8 @@
 import { NavLink, Outlet } from "react-router-dom";
+import ShadowTraceLogo from "../../assets/ShadowTraceLogo";
 
 const links = [
-  { to: "/", label: "Scan Setup" },
+  { to: "/scan", label: "Scan Setup" },
   { to: "/overview", label: "Overview" },
   { to: "/surface-map", label: "Surface Map" },
   { to: "/kill-chain", label: "Kill Chain" },
@@ -29,8 +30,7 @@ function AppLayout() {
       <aside className="sidebar">
         <div className="sidebar-top">
           <div>
-
-            <h1>ShadowTrace</h1>
+            <ShadowTraceLogo size={32} color="#F0F4F8" />
           </div>
           <p className="sidebar-copy">
             Public attack surface intelligence for a CTO who needs action, not noisy scan logs.

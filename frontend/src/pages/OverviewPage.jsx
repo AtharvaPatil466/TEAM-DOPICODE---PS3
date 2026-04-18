@@ -4,17 +4,18 @@ import NarrativeCard from "../components/cards/NarrativeCard";
 import PriorityActionsCard from "../components/cards/PriorityActionsCard";
 import FindingTable from "../components/findings/FindingTable";
 import { fetchDashboardData, fetchCtoSummary } from "../services/api";
+import { StickyResultsBar, TopFixesCard } from "../components/ResultsAdditions";
+import { SkeletonLine, SkeletonCard } from "../components/LoadingStates";
 
 function CtoCard({ row }) {
-  // Strip basic technical jargon for the CTO view
   const cleanReason = (row.reason || "").replace(/via CVE-\d{4}-\d+/gi, "").replace(/CVSS [\d.]+|exploit/gi, "").trim();
   const cleanAction = (row.action || "").replace(/CVE-\d{4}-\d+/gi, "").trim();
-  
+
   return (
-    <div style={{ background: "rgba(11,18,32,0.5)", border: "1px solid #1f3a5c", borderRadius: "8px", padding: "1rem", marginBottom: "0.75rem" }}>
-      <h4 style={{ margin: "0 0 0.5rem 0", fontSize: "1rem", color: "#e6f0ff" }}>{row.asset}</h4>
-      <p style={{ margin: "0 0 0.5rem 0", fontSize: "0.85rem", color: "#94a3b8" }}>{cleanReason}</p>
-      <p style={{ margin: "0", fontSize: "0.85rem", color: "#4ade80" }}>Fix: {cleanAction}</p>
+    <div style={{ background: "var(--panel)", border: "1px solid var(--panel-border)", borderRadius: 0, padding: "1rem", marginBottom: "0.75rem" }}>
+      <h4 style={{ margin: "0 0 0.5rem 0", fontSize: "1rem", color: "var(--text)" }}>{row.asset}</h4>
+      <p style={{ margin: "0 0 0.5rem 0", fontSize: "0.85rem", color: "var(--muted)" }}>{cleanReason}</p>
+      <p style={{ margin: "0", fontSize: "0.85rem", color: "#2ECC71" }}>Fix: {cleanAction}</p>
     </div>
   );
 }
@@ -44,12 +45,38 @@ function OverviewPage() {
     return (
       <section className="page">
         <div className="panel" style={{ textAlign: "center", padding: "4rem", borderColor: "var(--accent)" }}>
-          <h3 style={{ color: "#e6f0ff" }}>Generating executive summary...</h3>
-          <p style={{ color: "#94a3b8" }}>Translating technical findings into business risk.</p>
+          <h3 style={{ color: "var(--text)" }}>Generating executive summary...</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "1.5rem", maxWidth: 400, margin: "1.5rem auto 0" }}>
+            <SkeletonLine width="100%" height={16} />
+            <SkeletonLine width="80%" height={14} />
+            <SkeletonLine width="60%" height={14} />
+          </div>
         </div>
       </section>
     );
   }
+
+  const criticalCount = data.findingRows.filter(r => r.severity === 'Critical').length;
+  const highCount = data.findingRows.filter(r => r.severity === 'High').length;
+
+  /* Adapter for StickyResultsBar — maps dashboard data to expected shape */
+  const resultsForBar = {
+    domain: data.latestScan?.domain,
+    assets: data.findingRows.map(r => ({
+      cves: [{ severity: r.severity.toUpperCase() }]
+    })),
+    impact: {
+      total_exposure_min_inr: data.impactData?.regulatory_exposure?.min_inr,
+      total_exposure_max_inr: data.impactData?.regulatory_exposure?.max_inr,
+    }
+  };
+
+  /* Adapter for TopFixesCard — maps topActions to expected shape */
+  const fixesForCard = (data.topActions || []).slice(0, 3).map((a, i) => ({
+    asset_id: i,
+    fix_description: a.detail || a.title,
+    paths_broken: Math.max(1, 3 - i),
+  }));
 
   const today = data.findingRows.filter(r => r.severity === 'Critical' || r.severity === 'High');
   const thisWeek = data.findingRows.filter(r => r.severity === 'Medium');
@@ -57,6 +84,8 @@ function OverviewPage() {
 
   return (
     <section className="page overview-page">
+      <StickyResultsBar results={resultsForBar} />
+
       <section className="hero-card page-intro" style={{ position: "relative" }}>
         <div style={{ position: "absolute", top: "1.5rem", right: "1.5rem", display: "flex", gap: "0.5rem" }}>
           <button 
@@ -127,6 +156,8 @@ function OverviewPage() {
           <FindingTable rows={data.findingRows} />
         </>
       )}
+
+      <TopFixesCard fixes={fixesForCard} />
     </section>
   );
 }
