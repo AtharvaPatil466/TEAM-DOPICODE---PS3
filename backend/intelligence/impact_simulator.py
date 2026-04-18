@@ -152,6 +152,54 @@ def _calculate_operational_loss(size_metrics: dict, industry_multiplier: float, 
         "total_max_inr": total_max,
     }
 
+
+# Per-rule remediation cost estimates (INR).
+# Each maps to a category with a base cost + per-affected-asset marginal cost.
+RULE_REMEDIATION_COSTS = {
+    "EXP-001": {"category": "Patch Management",       "base": 200000,  "per_asset": 75000,  "hours_base": 8,  "hours_per_asset": 4},
+    "EXP-002": {"category": "Patch Management",       "base": 150000,  "per_asset": 60000,  "hours_base": 6,  "hours_per_asset": 3},
+    "CRED-001": {"category": "MFA & Auth Hardening",   "base": 500000,  "per_asset": 40000,  "hours_base": 20, "hours_per_asset": 4},
+    "CONF-001": {"category": "TLS Certificate Renewal","base": 80000,   "per_asset": 25000,  "hours_base": 4,  "hours_per_asset": 1},
+    "NET-001": {"category": "Network Segmentation",    "base": 800000,  "per_asset": 120000, "hours_base": 40, "hours_per_asset": 8},
+    "NET-002": {"category": "Perimeter Hardening",     "base": 300000,  "per_asset": 50000,  "hours_base": 12, "hours_per_asset": 3},
+    "MISC-001": {"category": "Admin Panel Lockdown",   "base": 150000,  "per_asset": 35000,  "hours_base": 6,  "hours_per_asset": 2},
+    "SHADOW-001": {"category": "Asset Inventory & NAC","base": 600000,  "per_asset": 80000,  "hours_base": 30, "hours_per_asset": 6},
+    "DATA-001": {"category": "Data Access Controls",   "base": 400000,  "per_asset": 100000, "hours_base": 16, "hours_per_asset": 8},
+    "CLOUD-001": {"category": "Bucket ACL Fix",        "base": 100000,  "per_asset": 20000,  "hours_base": 4,  "hours_per_asset": 1},
+    "SUPPLY-001": {"category": "Dependency Upgrade",   "base": 250000,  "per_asset": 60000,  "hours_base": 10, "hours_per_asset": 4},
+}
+_DEFAULT_COST = {"category": "General Hardening", "base": 200000, "per_asset": 50000, "hours_base": 8, "hours_per_asset": 3}
+
+
+def _estimate_prevention_cost(paths: list[dict]) -> tuple[float, int, str]:
+    """Estimate prevention cost from the distinct rule IDs across all paths."""
+    rule_assets: dict[str, set] = {}
+    for path in paths:
+        for hop in path["hops"]:
+            rule_id = hop.get("rule_id")
+            if rule_id:
+                rule_assets.setdefault(rule_id, set()).add(hop.get("target_id", 0))
+
+    total_cost = 0.0
+    total_hours = 0
+    categories: list[str] = []
+    for rule_id, asset_ids in rule_assets.items():
+        spec = RULE_REMEDIATION_COSTS.get(rule_id, _DEFAULT_COST)
+        cost = spec["base"] + spec["per_asset"] * len(asset_ids)
+        hours = spec["hours_base"] + spec["hours_per_asset"] * len(asset_ids)
+        total_cost += cost
+        total_hours += hours
+        if spec["category"] not in categories:
+            categories.append(spec["category"])
+
+    summary_parts = categories[:3]
+    summary = f"~{total_hours} engineering hours across {', '.join(summary_parts)}"
+    if len(categories) > 3:
+        summary += f" and {len(categories) - 3} other area(s)"
+    summary += "."
+    return total_cost, total_hours, summary
+
+
 def _categorize_paths(paths: list[dict], classifications: dict[int, dict]) -> list[dict]:
     scenarios = {
         "external_rce": {"name": "External RCE", "desc": "Remote code execution from the public internet.", "paths": []},
@@ -261,9 +309,8 @@ def compute_impact(db, scan) -> Optional[dict]:
         if not data["paths"]:
             continue
         
-        # Determine prevention cost (dummy estimation logic based on path count and severity)
         path_count = len(data["paths"])
-        prevention = 300000 + (path_count * 50000) # Base 3 Lakhs + 50k per path
+        prevention, eng_hours, prevention_summary = _estimate_prevention_cost(data["paths"])
         
         exposure_min = tot_min * (path_count / len(paths))
         exposure_max = tot_max * (path_count / len(paths))
@@ -282,7 +329,7 @@ def compute_impact(db, scan) -> Optional[dict]:
             "total_exposure_min_inr": exposure_min,
             "total_exposure_max_inr": exposure_max,
             "prevention_cost_inr": prevention,
-            "prevention_summary": f"Estimated {int(prevention/10000)} engineering hours to implement segmentation and patching.",
+            "prevention_summary": prevention_summary,
             "roi_ratio": average_exposure / prevention if prevention > 0 else 0,
         })
         
@@ -312,6 +359,12 @@ def compute_impact(db, scan) -> Optional[dict]:
     db.add(report)
     db.commit()
     db.refresh(report)
+
+    # Generate executive advisory via local Ollama (fire-and-forget, non-blocking)
+    advisory = _generate_executive_advisory(scan, tot_min, tot_max, out_scenarios, max_tier_hit)
+    if advisory:
+        report.executive_advisory = advisory
+        db.commit()
     
     return {
         "report_id": report.id,
@@ -321,3 +374,38 @@ def compute_impact(db, scan) -> Optional[dict]:
         "scenario_count": len(out_scenarios),
         "top_scenario_name": out_scenarios[0]["name"] if out_scenarios else "None",
     }
+
+
+def _generate_executive_advisory(scan, tot_min: float, tot_max: float,
+                                  scenarios: list[dict], max_tier: int) -> Optional[str]:
+    """Call local Ollama Llama 3.2 to produce a CISO-level advisory. Returns None on failure."""
+    import httpx
+    import logging
+
+    log = logging.getLogger(__name__)
+
+    top_scenarios = ", ".join(s["name"] for s in scenarios[:3]) or "None"
+    prompt = (
+        f"You are the CISO writing a 4-sentence executive advisory for the board.\n"
+        f"Domain: {scan.target_domain}. Company size: {scan.company_size or 'unknown'}. "
+        f"Industry: {scan.industry_sector or 'unknown'}.\n"
+        f"Total breach exposure: {_format_inr(tot_min)} to {_format_inr(tot_max)}.\n"
+        f"Top attack scenarios: {top_scenarios}.\n"
+        f"Highest data sensitivity tier compromised: Tier {max_tier}.\n"
+        f"Lead with the single biggest business risk, then the financial exposure, "
+        f"then the most urgent remediation action, and close with a timeline recommendation. "
+        f"Be direct, no filler."
+    )
+
+    try:
+        resp = httpx.post(
+            "http://localhost:11434/api/generate",
+            json={"model": "llama3.2", "prompt": prompt, "stream": False},
+            timeout=30.0,
+        )
+        if resp.status_code == 200:
+            text = resp.json().get("response", "").strip()
+            return text if text else None
+    except Exception as e:
+        log.debug("Ollama advisory generation failed (non-critical): %s", e)
+    return None

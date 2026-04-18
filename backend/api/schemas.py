@@ -277,3 +277,17 @@ class ScenarioMatrixResponse(BaseModel):
     total_paths: int
     total_scenarios: int
     scenarios: list[AttackScenario]
+
+
+class ComplianceControl(BaseModel):
+    control: str
+    framework: str
+    rule_ids: list[str]
+    edge_count: int
+
+
+class ComplianceSummaryResponse(BaseModel):
+    scan_id: int
+    total_violations: int
+    controls: list[ComplianceControl]
+

@@ -394,6 +394,68 @@ def build_pdf(db: Session, scan: Scan) -> bytes:
         elems.append(Spacer(1, 0.12 * inch))
 
     elems.append(PageBreak())
+
+    # Remediation priorities
+    if remediation_candidates:
+        elems.append(Paragraph("Remediation Priorities", styles["Heading2"]))
+        elems.append(Paragraph(
+            "Fixes ranked by how many modeled attack paths they break — highest leverage first.",
+            body,
+        ))
+        elems.append(Spacer(1, 0.1 * inch))
+        rem_rows = [["#", "Fix", "Paths Blocked", "Rules", "Max CVSS"]]
+        for i, rc in enumerate(remediation_candidates[:8], 1):
+            rem_rows.append([
+                str(i),
+                rc["summary"],
+                str(rc["blocks_paths"]),
+                ", ".join(rc.get("rule_ids", [])),
+                f"{rc['max_cvss']:.1f}" if rc.get("max_cvss") else "—",
+            ])
+        rem_table = Table(rem_rows, colWidths=[0.35 * inch, 2.8 * inch, 0.8 * inch, 1.2 * inch, 0.7 * inch])
+        rem_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c3e50")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        elems.append(rem_table)
+        elems.append(Spacer(1, 0.15 * inch))
+
+    # Compliance controls mapping
+    from backend.intelligence.edge_rules import RULES as all_rules
+    control_hits: dict[str, list[str]] = {}
+    for edge in edges:
+        rule_obj = next((r for r in all_rules if r.id == edge.rule_id), None)
+        if rule_obj:
+            for ctrl in rule_obj.compliance_controls:
+                control_hits.setdefault(ctrl, [])
+                if edge.rule_id not in control_hits[ctrl]:
+                    control_hits[ctrl].append(edge.rule_id)
+
+    if control_hits:
+        elems.append(Paragraph("Compliance Control Mapping", styles["Heading2"]))
+        elems.append(Paragraph(
+            "Controls referenced by at least one active edge in the attack graph.",
+            body,
+        ))
+        elems.append(Spacer(1, 0.1 * inch))
+        ctrl_rows = [["Framework", "Control", "Triggered By"]]
+        for ctrl in sorted(control_hits.keys()):
+            framework = ctrl.split(" ")[0] if " " in ctrl else ctrl
+            ctrl_rows.append([framework, ctrl, ", ".join(control_hits[ctrl])])
+        ctrl_table = Table(ctrl_rows, colWidths=[1.0 * inch, 2.5 * inch, 2.5 * inch])
+        ctrl_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c3e50")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        elems.append(ctrl_table)
+
+    elems.append(PageBreak())
     elems.append(Paragraph("Named Rulebook", styles["Heading2"]))
     rule_rows = [["ID", "Rule", "Definition"]]
     for rule in named_rulebook():

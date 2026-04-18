@@ -1,9 +1,11 @@
 import asyncio
 import logging
+import time
+from collections import defaultdict
 from datetime import datetime
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
@@ -15,9 +17,21 @@ from backend.db.models import Scan, Asset, Port, CVE, GraphEdge, AttackPath, Imp
 from backend.api import schemas
 from backend.api.demo_replay import replay_scan
 from backend.api.events import bus
-from backend.intelligence.edge_rules import rulebook as graph_rulebook
+from backend.intelligence.edge_rules import rulebook as graph_rulebook, RULES
 
 logging.basicConfig(level=LOG_LEVEL)
+
+# ── Rate Limiter ──────────────────────────────────────────────
+RATE_LIMIT_SECONDS = 30
+_last_scan_by_ip: dict[str, float] = defaultdict(float)
+
+def _check_rate_limit(request: Request) -> None:
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    if now - _last_scan_by_ip[client_ip] < RATE_LIMIT_SECONDS:
+        remaining = int(RATE_LIMIT_SECONDS - (now - _last_scan_by_ip[client_ip]))
+        raise HTTPException(429, f"Rate limited. Wait {remaining}s before starting another scan.")
+    _last_scan_by_ip[client_ip] = now
 
 app = FastAPI(title="ShadowTrace API", version="0.1.0")
 
@@ -41,7 +55,8 @@ def health() -> dict:
 
 
 @app.post("/scan/start", response_model=schemas.ScanStartResponse)
-async def scan_start(req: schemas.ScanStartRequest, db: Session = Depends(get_db)) -> schemas.ScanStartResponse:
+async def scan_start(req: schemas.ScanStartRequest, request: Request, db: Session = Depends(get_db)) -> schemas.ScanStartResponse:
+    _check_rate_limit(request)
     from backend.api.orchestrator import run_scan
 
     scan = Scan(
@@ -464,4 +479,44 @@ def impact_scenarios(db: Session = Depends(get_db)) -> schemas.ScenarioMatrixRes
         total_paths=total_paths,
         total_scenarios=len(scenarios),
         scenarios=scenarios,
+    )
+
+
+@app.get("/compliance", response_model=schemas.ComplianceSummaryResponse)
+def compliance_summary(db: Session = Depends(get_db)) -> schemas.ComplianceSummaryResponse:
+    scan = _latest_scan(db)
+    if scan is None:
+        return schemas.ComplianceSummaryResponse(scan_id=0, total_violations=0, controls=[])
+
+    # Collect which compliance controls are violated by edges in this scan
+    rules_by_id = {r.id: r for r in RULES}
+    control_hits: dict[str, dict] = {}
+    for edge in scan.edges:
+        rule = rules_by_id.get(edge.rule_id)
+        if rule is None:
+            continue
+        for control_tag in rule.compliance_controls:
+            bucket = control_hits.setdefault(control_tag, {
+                "control": control_tag,
+                "rule_ids": set(),
+                "edge_count": 0,
+                "framework": control_tag.split(" ")[0] if " " in control_tag else control_tag,
+            })
+            bucket["rule_ids"].add(edge.rule_id)
+            bucket["edge_count"] += 1
+
+    controls = [
+        schemas.ComplianceControl(
+            control=v["control"],
+            framework=v["framework"],
+            rule_ids=sorted(v["rule_ids"]),
+            edge_count=v["edge_count"],
+        )
+        for v in sorted(control_hits.values(), key=lambda x: -x["edge_count"])
+    ]
+
+    return schemas.ComplianceSummaryResponse(
+        scan_id=scan.id,
+        total_violations=len(controls),
+        controls=controls,
     )
