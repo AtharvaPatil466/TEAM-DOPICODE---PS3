@@ -11,6 +11,9 @@ PROBE_CONCURRENCY = 30
 PROBE_TIMEOUT = 8.0
 
 
+MAX_BODY_BYTES = 200_000
+
+
 @dataclass
 class LiveHost:
     host: str
@@ -19,6 +22,7 @@ class LiveHost:
     final_url: str
     headers: dict[str, str] = field(default_factory=dict)
     scheme: str = "http"
+    body: str = ""
 
     def is_https(self) -> bool:
         return self.scheme == "https"
@@ -31,6 +35,7 @@ async def _probe_one(client: httpx.AsyncClient, host: str, scheme: str) -> LiveH
     except (httpx.HTTPError, OSError) as e:
         log.debug("probe %s failed: %s", url, e)
         return None
+    body = r.text[:MAX_BODY_BYTES] if r.text else ""
     return LiveHost(
         host=host,
         url=url,
@@ -38,6 +43,7 @@ async def _probe_one(client: httpx.AsyncClient, host: str, scheme: str) -> LiveH
         final_url=str(r.url),
         headers={k.lower(): v for k, v in r.headers.items()},
         scheme=scheme,
+        body=body,
     )
 
 
