@@ -1,12 +1,42 @@
 import { useEffect, useState } from "react";
 import { fetchDashboardData } from "../services/api";
+import { generateNarrative, buildRuleExplanationPrompt } from "../services/llm";
 
 function KillChainPage() {
   const [data, setData] = useState(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalContent, setModalContent] = useState(null);
+  const [modalLoading, setModalLoading] = useState(false);
 
   useEffect(() => {
     fetchDashboardData().then(setData);
   }, []);
+
+  const openWhyThisHop = async (step) => {
+    if (!step.ruleId || !step.technique) return;
+
+    setModalOpen(true);
+    setModalLoading(true);
+    setModalContent(null);
+
+    const prompt = buildRuleExplanationPrompt(step.ruleId, step.technique);
+    const explanation = await generateNarrative(prompt);
+
+    // Fallback if LLM fails
+    const fallback = `Rule ${step.ruleId} maps to ${step.technique}. This edge is valid when the target condition is met, enabling lateral movement or privilege escalation in an attack chain.`;
+
+    setModalContent({
+      title: `Why ${step.ruleId}?`,
+      technique: step.technique,
+      explanation: explanation || fallback
+    });
+    setModalLoading(false);
+  };
+
+  const closeModal = () => {
+    setModalOpen(false);
+    setModalContent(null);
+  };
 
   if (!data) {
     return <section className="page">Projecting attack chain...</section>;
@@ -40,11 +70,110 @@ function KillChainPage() {
               <div>
                 <h3>{step.title}</h3>
                 <p>{step.summary}</p>
+                {step.ruleId && step.technique && (
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => openWhyThisHop(step)}
+                    style={{
+                      marginTop: "8px",
+                      background: "none",
+                      border: "none",
+                      color: "#5d9eff",
+                      cursor: "pointer",
+                      fontSize: "0.85rem",
+                      textDecoration: "underline",
+                      padding: 0
+                    }}
+                  >
+                    Why this hop? ({step.ruleId} → {step.technique})
+                  </button>
+                )}
+                {step.hasLlmRationale && (
+                  <span
+                    style={{
+                      marginLeft: "12px",
+                      fontSize: "0.75rem",
+                      color: "#7dd3fc",
+                      background: "rgba(125, 211, 252, 0.1)",
+                      padding: "2px 8px",
+                      borderRadius: "4px"
+                    }}
+                  >
+                    AI-enhanced
+                  </span>
+                )}
               </div>
             </article>
           ))}
         </div>
       </div>
+
+      {/* Why This Hop Modal */}
+      {modalOpen && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0, 0, 0, 0.7)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000
+          }}
+          onClick={closeModal}
+        >
+          <div
+            style={{
+              background: "#0b1220",
+              border: "1px solid #1f3a5c",
+              borderRadius: "12px",
+              padding: "24px",
+              maxWidth: "480px",
+              width: "90%",
+              boxShadow: "0 20px 60px rgba(0, 0, 0, 0.5)"
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {modalLoading ? (
+              <div style={{ textAlign: "center", padding: "20px" }}>
+                <p>Analyzing rule context...</p>
+              </div>
+            ) : modalContent ? (
+              <>
+                <h3 style={{ margin: "0 0 8px 0", color: "#e6f0ff" }}>{modalContent.title}</h3>
+                <p
+                  style={{
+                    margin: "0 0 16px 0",
+                    fontSize: "0.85rem",
+                    color: "#7dd3fc",
+                    background: "rgba(125, 211, 252, 0.1)",
+                    padding: "4px 12px",
+                    borderRadius: "4px",
+                    display: "inline-block"
+                  }}
+                >
+                  MITRE {modalContent.technique}
+                </p>
+                <p style={{ margin: "0 0 20px 0", lineHeight: "1.6", color: "#cfd8e6" }}>
+                  {modalContent.explanation}
+                </p>
+                <button
+                  type="button"
+                  className="button primary"
+                  onClick={closeModal}
+                  style={{ width: "100%" }}
+                >
+                  Close
+                </button>
+              </>
+            ) : null}
+          </div>
+        </div>
+      )}
     </section>
   );
 }

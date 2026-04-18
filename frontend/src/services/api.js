@@ -1,3 +1,10 @@
+import {
+  generateNarrative,
+  buildExecutiveSummaryPrompt,
+  buildAnalystReportPrompt,
+  buildHopRationalePrompt,
+} from "./llm";
+
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
 const WS_BASE = API_BASE.replace(/^http/, "ws");
 
@@ -298,7 +305,21 @@ function buildNodeDetails(graphModel, assetsById, latestScan) {
   return details;
 }
 
-function buildKillChainSteps(attackPath, assetsById, latestScan) {
+async function buildKillChainSteps(attackPath, assetsById, latestScan) {
+  // Helper to get LLM rationale for a hop
+  const getHopRationale = async (hop, index) => {
+    const asset = assetsById[hop.asset_id];
+    if (!asset || !hop.rule_id) return null;
+
+    const prompt = buildHopRationalePrompt(
+      assetLabel(asset),
+      hop.rule_id,
+      hop.cve_id,
+      hop.cvss
+    );
+    return generateNarrative(prompt);
+  };
+
   const steps = [
     {
       title: "External discovery",
@@ -306,7 +327,7 @@ function buildKillChainSteps(attackPath, assetsById, latestScan) {
     }
   ];
 
-  if (!attackPath.hops.length) {
+  if (!attackPath.hops?.length) {
     steps.push({
       title: "Priority exposure",
       summary: "No full attack path is cached for this scan, so the demo falls back to the highest-risk public finding."
@@ -314,14 +335,28 @@ function buildKillChainSteps(attackPath, assetsById, latestScan) {
     return steps;
   }
 
+  // Generate LLM rationales for each hop in parallel
+  const hopRationales = await Promise.all(
+    attackPath.hops.map((hop, index) => getHopRationale(hop, index))
+  );
+
   attackPath.hops.forEach((hop, index) => {
     const asset = assetsById[hop.asset_id];
     const exposure = asset ? summarizeExposure(asset) : null;
+    const llmRationale = hopRationales[index];
+
+    // Use LLM rationale if available, otherwise fallback to static explanation
+    const summary = llmRationale || (exposure
+      ? `${assetLabel(asset)} becomes the next step because ${exposure.reason.toLowerCase()}`
+      : `${hop.label} is included in the cached attack path.`);
+
     steps.push({
       title: index === attackPath.hops.length - 1 ? "Objective reached" : `Hop ${index + 1}`,
-      summary: exposure
-        ? `${assetLabel(asset)} becomes the next step because ${exposure.reason.toLowerCase()}`
-        : `${hop.label} is included in the cached attack path.`
+      summary,
+      ruleId: hop.rule_id,
+      technique: hop.attack_techniques?.[0],
+      cveId: hop.cve_id,
+      hasLlmRationale: !!llmRationale
     });
   });
 
@@ -338,16 +373,35 @@ function buildKillChainSteps(attackPath, assetsById, latestScan) {
   return steps.slice(0, 4);
 }
 
-function buildReportSections(latestScan, findingRows, attackPath, impactData) {
+async function buildReportSections(latestScan, findingRows, attackPath, impactData, assets) {
   const criticalCount = findingRows.filter((row) => row.severity === "Critical").length;
   const lead = findingRows[0];
+
+  // Build critical CVEs list for LLM prompt
+  const criticalCves = findingRows
+    .filter((row) => row.severity === "Critical")
+    .map((row) => row.reason?.match(/CVE-\d{4}-\d+/)?.[0])
+    .filter(Boolean);
+
+  // Find crown jewel asset
+  const crownJewel = assets?.find((a) => a.is_crown_jewel);
+  const crownJewelLabel = crownJewel ? assetLabel(crownJewel) : null;
+
+  // Generate LLM analyst narrative
+  const reportPrompt = buildAnalystReportPrompt(
+    latestScan.total_assets,
+    criticalCves,
+    crownJewelLabel
+  );
+  const analystNarrative = await generateNarrative(reportPrompt);
+
   const sections = [
     {
       heading: "Executive summary",
       body: `${latestScan.domain} is running as a cached ${latestScan.internal_scope ? "external plus internal" : "external-only"} demo with ${latestScan.total_assets} assets and ${criticalCount} critical findings.`
     }
   ];
-  
+
   if (impactData && impactData.executive_advisory) {
     sections.push({
       heading: "Financial Risk Advisory",
@@ -356,33 +410,52 @@ function buildReportSections(latestScan, findingRows, attackPath, impactData) {
   }
 
   sections.push({
-      heading: "Critical exposures",
-      body: lead
-        ? `${lead.asset} is the highest-priority issue because ${lead.reason.toLowerCase()}`
-        : "No prioritized findings are cached yet."
+    heading: "Critical exposures",
+    body: lead
+      ? `${lead.asset} is the highest-priority issue because ${lead.reason.toLowerCase()}`
+      : "No prioritized findings are cached yet."
   });
-  
+
+  // Use LLM-generated analyst narrative or fallback to server narrative
   sections.push({
-      heading: "Modeled attack path",
-      body: attackPath.narrative || "No attack path narrative has been computed for the current cached scan."
+    heading: "Analyst narrative",
+    body: analystNarrative || attackPath.narrative || "No attack path narrative has been computed for the current cached scan."
   });
-  
+
   sections.push({
-      heading: "Recommended next steps",
-      body: findingRows.slice(0, 3).map((row) => row.action).join(" ")
+    heading: "Recommended next steps",
+    body: findingRows.slice(0, 3).map((row) => row.action).join(" ")
   });
-  
+
   return sections;
 }
 
-function buildNarrative(latestScan, attackPath, findingRows) {
-  if (attackPath.narrative) {
-    return attackPath.narrative;
-  }
-  if (findingRows[0]) {
-    return `${latestScan.domain} is currently dominated by ${findingRows[0].asset}, which is the highest-risk public finding in the cached demo.`;
-  }
-  return `No cached scan is available for ${latestScan.domain}.`;
+async function buildNarrative(latestScan, attackPath, findingRows) {
+  // Fallback if LLM is unavailable
+  const fallback = () => {
+    if (attackPath.narrative) {
+      return attackPath.narrative;
+    }
+    if (findingRows[0]) {
+      return `${latestScan.domain} is currently dominated by ${findingRows[0].asset}, which is the highest-risk public finding in the cached demo.`;
+    }
+    return `No cached scan is available for ${latestScan.domain}.`;
+  };
+
+  // Build LLM prompt for executive summary
+  const criticalCount = findingRows.filter((row) => row.severity === "Critical").length;
+  const hopCount = attackPath.hops?.length || 0;
+  const topCve = findingRows[0]?.reason?.match(/CVE-\d{4}-\d+/)?.[0];
+
+  const prompt = buildExecutiveSummaryPrompt(
+    latestScan.total_assets,
+    criticalCount,
+    hopCount,
+    topCve
+  );
+
+  const llmResponse = await generateNarrative(prompt);
+  return llmResponse || fallback();
 }
 
 function buildEmptyDashboard(message) {
@@ -524,6 +597,13 @@ export async function fetchDashboardData() {
     const storageFindings = assets.filter((asset) => asset.asset_type === "storage").length;
     const maxRisk = Math.max(...assets.map((asset) => asset.risk_score || 0), 0);
 
+    // Build LLM-enhanced content in parallel
+    const [narrative, killChainSteps, reportSections] = await Promise.all([
+      buildNarrative(latestScan, attackPath, findingRows),
+      buildKillChainSteps(attackPath, assetsById, latestScan),
+      buildReportSections(latestScan, findingRows, attackPath, impactData, assets)
+    ]);
+
     return {
       latestScan,
       summaryMetrics: [
@@ -541,13 +621,13 @@ export async function fetchDashboardData() {
         { label: "Breach Exposure", value: impactData ? impactData.total_formatted.split(" - ")[1] : "Calculating...", tone: "critical" },
         { label: "Executive risk", value: `${(maxRisk / 10).toFixed(1)} / 10`, tone: "critical" }
       ],
-      narrative: buildNarrative(latestScan, attackPath, findingRows),
+      narrative,
       topActions: buildTopActions(findingRows),
       findingRows,
       graph: graphModel,
       nodeDetails: buildNodeDetails(graphModel, assetsById, latestScan),
-      killChainSteps: buildKillChainSteps(attackPath, assetsById, latestScan),
-      reportSections: buildReportSections(latestScan, findingRows, attackPath, impactData),
+      killChainSteps,
+      reportSections,
       impactData,
       impactScenarios
     };
