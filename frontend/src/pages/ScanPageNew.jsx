@@ -212,10 +212,109 @@ function ensureKeyframes() {
 }
 
 /* ── Component ── */
-function ScanPage() {
+/* Setup form when no domain param is provided */
+function ScanSetupForm() {
   const navigate = useNavigate();
+  const [inputDomain, setInputDomain] = useState("");
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const trimmed = inputDomain.trim();
+    if (!trimmed) return;
+    navigate(`/scan?domain=${encodeURIComponent(trimmed)}`);
+  };
+
+  return (
+    <div style={{
+      ...S.page,
+      alignItems: "center",
+      justifyContent: "center",
+      minHeight: "80vh",
+    }}>
+      <div style={S.topBar}>
+        <span style={S.topTitle}>New Scan</span>
+      </div>
+      <div style={{
+        maxWidth: 520,
+        width: "100%",
+        display: "flex",
+        flexDirection: "column",
+        gap: "var(--space-5, 20px)",
+      }}>
+        <h2 style={{ fontSize: "1.5rem", fontWeight: 700 }}>Enter a domain to scan</h2>
+        <p style={{ color: "var(--color-text-secondary, #A8BCCF)", fontSize: "0.9rem" }}>
+          We'll discover subdomains, open ports, CVEs, and compute breach risk in rupees.
+        </p>
+        <form onSubmit={handleSubmit} style={{ display: "flex", gap: 0 }}>
+          <input
+            type="text"
+            value={inputDomain}
+            onChange={(e) => setInputDomain(e.target.value)}
+            placeholder="e.g. yourcompany.com"
+            required
+            style={{
+              flex: 1,
+              padding: "14px 20px",
+              background: "var(--color-bg-tertiary, #162336)",
+              color: "var(--color-text-primary, #F0F4F8)",
+              border: "1px solid var(--color-border, #1E3048)",
+              borderRight: "none",
+              borderRadius: 0,
+              fontSize: "0.9rem",
+              fontFamily: "inherit",
+              outline: "none",
+            }}
+          />
+          <button type="submit" style={{
+            padding: "14px 24px",
+            background: "var(--color-accent-red, #E63946)",
+            color: "#fff",
+            border: "1px solid var(--color-accent-red, #E63946)",
+            borderRadius: 0,
+            fontSize: "0.875rem",
+            fontWeight: 700,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            cursor: "pointer",
+            fontFamily: "inherit",
+          }}>
+            SCAN →
+          </button>
+        </form>
+        <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "0.8rem", color: "var(--color-text-muted, #5C7A96)" }}>Try:</span>
+          {["scanme.nmap.org", "example.com", "github.com"].map((d) => (
+            <span
+              key={d}
+              onClick={() => navigate(`/scan?domain=${encodeURIComponent(d)}`)}
+              style={{
+                cursor: "pointer",
+                fontSize: "0.8rem",
+                color: "var(--color-accent-cyan, #00B4D8)",
+                textDecoration: "underline",
+              }}
+            >
+              {d}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Wrapper that decides between setup form and active scan */
+function ScanPageWrapper() {
   const [params] = useSearchParams();
-  const domain = params.get("domain") || "democorp.io";
+  const domain = params.get("domain");
+
+  if (!domain) return <ScanSetupForm />;
+  return <ScanPage domain={domain} />;
+}
+
+/* Active scan component — always receives a domain prop */
+function ScanPage({ domain }) {
+  const navigate = useNavigate();
 
   const [scanId, setScanId] = useState(null);
   const [progress, setProgress] = useState(0);
@@ -530,4 +629,4 @@ function ScanPage() {
   );
 }
 
-export default ScanPage;
+export default ScanPageWrapper;

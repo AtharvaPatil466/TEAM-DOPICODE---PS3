@@ -65,10 +65,11 @@ ShadowTrace answers that question.
 
 ### 📊 Frontend Dashboard
 - **Real-Time Scan Feed** — WebSocket-powered live progress during scans
+- **Executive CTO View** — Plain-English summaries and priority actions devoid of security jargon
 - **Interactive Attack Surface Graph** — D3.js visualization with risk-colored nodes
-- **Kill Chain Timeline** — Step-by-step attack narrative with AI-enhanced rationale
+- **Kill Chain Timeline** — Step-by-step attack narrative with AI-enhanced executive rationale
 - **Impact Dashboard** — Financial exposure ranges with scenario breakdowns
-- **PDF Report Download** — Professional threat analyst report with full appendices
+- **Executive PDF Report** — Professional business-focused threat letter and analyst appendices
 - **"What If" Simulation** — Patch assets/CVEs and watch attack paths break in real time
 
 ---
@@ -79,8 +80,8 @@ ShadowTrace answers that question.
 ┌─────────────────────────────────────────────────────────────┐
 │                        Frontend (React 19 + Vite)           │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌───────────────┐  │
-│  │ Overview  │ │   Scan   │ │Kill Chain│ │    Impact     │  │
-│  │   Page    │ │   Page   │ │   Page   │ │   Dashboard   │  │
+│  │ CTO View  │ │ Landing  │ │Kill Chain│ │    Impact     │  │
+│  │   Page    │ │ & Scan   │ │   Page   │ │   Dashboard   │  │
 │  └──────────┘ └──────────┘ └──────────┘ └───────────────┘  │
 │         ↕ REST + WebSocket          ↕ Ollama (localhost)    │
 ├─────────────────────────────────────────────────────────────┤
@@ -266,7 +267,7 @@ project/
 │   └── config.py             # Environment config (.env loading)
 ├── frontend/
 │   ├── src/
-│   │   ├── pages/            # Overview, Scan, KillChain, Impact, SurfaceMap, Report
+│   │   ├── pages/            # Landing, CTO, Overview, Scan, KillChain, Impact, SurfaceMap, Report
 │   │   ├── components/       # Cards, Findings, Graph (D3), Layout, Reports
 │   │   ├── services/         # api.js (REST/WS client), llm.js (Ollama integration)
 │   │   └── styles/           # Global CSS

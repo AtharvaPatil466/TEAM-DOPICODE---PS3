@@ -80,9 +80,34 @@ async def scan_start(
     from backend.api.orchestrator import run_scan
 
     try:
-        clean_domain = normalize_domain(req.domain)
-    except ValueError as e:
-        raise HTTPException(422, str(e))
+        import re
+        d = (req.domain or "").strip().lower()
+        if d.startswith("http://"): d = d[7:]
+        if d.startswith("https://"): d = d[8:]
+        if d.startswith("www."): d = d[4:]
+        d = d.rstrip("/")
+        
+        if not d:
+            raise ValueError()
+        if len(d) > 253:
+            raise ValueError()
+        if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", d):
+            raise ValueError()
+        if d in ("localhost", "127.0.0.1") or d.startswith("localhost:") or d.startswith("127.0.0.1:"):
+            raise ValueError()
+        if " " in d:
+            raise ValueError()
+        if "." not in d:
+            raise ValueError()
+            
+        clean_domain = d
+    except ValueError:
+        return Response(status_code=422, content=b'{"error": "Invalid domain", "detail": "Please enter a valid public domain name like example.com"}', media_type="application/json")
+
+    running_scans = db.query(Scan).filter(Scan.status == "running").count()
+    if running_scans > 2:
+        return Response(status_code=429, content=b'{"error": "Too busy", "detail": "Two scans are already running. Please wait for one to complete before starting another."}', media_type="application/json")
+
 
     scan = Scan(
         target_domain=clean_domain,
@@ -131,6 +156,22 @@ def latest_scan(db: Session = Depends(get_db)) -> schemas.LatestScanResponse:
     if scan is None:
         raise HTTPException(404, "no scans available")
     return _scan_to_response(scan)
+
+
+@app.get("/scan/history")
+def scan_history(db: Session = Depends(get_db)) -> list:
+    """Return all completed scans ordered by most recent first, for the diff page."""
+    scans = db.query(Scan).filter(Scan.status == "completed").order_by(Scan.id.desc()).limit(20).all()
+    return [
+        {
+            "scan_id": s.id,
+            "domain": s.target_domain,
+            "total_assets": s.total_assets,
+            "total_cves": s.total_cves,
+            "start_time": str(s.start_time) if s.start_time else None,
+        }
+        for s in scans
+    ]
 
 
 @app.websocket("/scan/live")
@@ -593,18 +634,98 @@ def report_pdf_by_id(
     )
 
 
-@app.get("/demo/preloaded", response_model=schemas.LatestScanResponse)
-def demo_preloaded(db: Session = Depends(get_db)) -> schemas.LatestScanResponse:
-    """Return the most recent completed scan as a stage-safe demo payload."""
-    scan = (
-        db.query(Scan)
-        .filter(Scan.status == "completed")
-        .order_by(desc(Scan.id))
-        .first()
-    ) or _latest_scan(db)
-    if scan is None:
-        raise HTTPException(404, "no preloaded scan available")
-    return _scan_to_response(scan)
+@app.get("/api/demo/preloaded")
+@app.get("/demo/preloaded")
+def demo_preloaded():
+    return {
+        "scan_id": 9999,
+        "status": "completed",
+        "domain": "democorp.in",
+        "subnet": None,
+        "total_assets": 8,
+        "total_cves": 15,
+        "assets": [
+            {"id": 1, "hostname": "api.democorp.in", "ip": "1.1.1.1", "asset_type": "subdomain", "os": None, "risk_score": 95, "is_shadow_device": False, "is_crown_jewel": False, "exposure": "external", "open_ports": [], "services": [], "cve_count": 0},
+            {"id": 2, "hostname": "storage.democorp.in", "ip": "1.1.1.2", "asset_type": "bucket", "os": None, "risk_score": 95, "is_shadow_device": False, "is_crown_jewel": False, "exposure": "external", "open_ports": [], "services": [], "cve_count": 0},
+            {"id": 3, "hostname": "db.democorp.in", "ip": "1.1.1.3", "asset_type": "server", "os": None, "risk_score": 90, "is_shadow_device": False, "is_crown_jewel": False, "exposure": "external", "open_ports": [], "services": [], "cve_count": 1},
+            {"id": 4, "hostname": "admin.democorp.in", "ip": "1.1.1.4", "asset_type": "server", "os": None, "risk_score": 75, "is_shadow_device": False, "is_crown_jewel": False, "exposure": "external", "open_ports": [], "services": [], "cve_count": 0},
+            {"id": 5, "hostname": "portal.democorp.in", "ip": "1.1.1.5", "asset_type": "server", "os": None, "risk_score": 75, "is_shadow_device": False, "is_crown_jewel": False, "exposure": "external", "open_ports": [], "services": [], "cve_count": 0},
+            {"id": 6, "hostname": "vpn.democorp.in", "ip": "1.1.1.6", "asset_type": "server", "os": None, "risk_score": 70, "is_shadow_device": False, "is_crown_jewel": False, "exposure": "external", "open_ports": [], "services": [], "cve_count": 0},
+            {"id": 7, "hostname": "mail.democorp.in", "ip": "1.1.1.7", "asset_type": "server", "os": None, "risk_score": 70, "is_shadow_device": False, "is_crown_jewel": False, "exposure": "external", "open_ports": [], "services": [], "cve_count": 0},
+            {"id": 8, "hostname": "www.democorp.in", "ip": "1.1.1.8", "asset_type": "server", "os": None, "risk_score": 10, "is_shadow_device": False, "is_crown_jewel": False, "exposure": "external", "open_ports": [], "services": [], "cve_count": 0}
+        ],
+        "graph": {
+            "nodes": [
+                {"id": 0, "label": "Internet", "risk_level": "low", "asset_type": "internet", "is_crown_jewel": False, "is_shadow_device": False},
+                {"id": 1, "label": "api.democorp.in", "risk_level": "critical", "asset_type": "subdomain", "is_crown_jewel": False, "is_shadow_device": False},
+                {"id": 2, "label": "storage.democorp.in", "risk_level": "critical", "asset_type": "bucket", "is_crown_jewel": False, "is_shadow_device": False},
+                {"id": 3, "label": "db.democorp.in", "risk_level": "critical", "asset_type": "server", "is_crown_jewel": False, "is_shadow_device": False},
+                {"id": 4, "label": "admin.democorp.in", "risk_level": "high", "asset_type": "server", "is_crown_jewel": False, "is_shadow_device": False},
+                {"id": 5, "label": "portal.democorp.in", "risk_level": "high", "asset_type": "server", "is_crown_jewel": False, "is_shadow_device": False}
+            ],
+            "edges": [
+                {"source": 0, "target": 1, "relationship": "TAKEOVER", "rule_id": "TAKEOVER-001", "rationale": "", "weight": 1.0, "attack_techniques": [], "evidence": {}, "verified_at": None, "verification_evidence": None},
+                {"source": 0, "target": 2, "relationship": "PUBLIC_S3", "rule_id": "CLOUD-001", "rationale": "", "weight": 1.0, "attack_techniques": [], "evidence": {}, "verified_at": None, "verification_evidence": None},
+                {"source": 0, "target": 4, "relationship": "EXPOSED", "rule_id": "NET-001", "rationale": "", "weight": 1.0, "attack_techniques": [], "evidence": {}, "verified_at": None, "verification_evidence": None},
+                {"source": 0, "target": 5, "relationship": "EXPOSED", "rule_id": "NET-001", "rationale": "", "weight": 1.0, "attack_techniques": [], "evidence": {}, "verified_at": None, "verification_evidence": None}
+            ]
+        }
+    }
+
+@app.get("/api/demo/preloaded/pdf")
+@app.get("/demo/preloaded/pdf")
+def demo_preloaded_pdf():
+    class DummyImpact:
+        total_exposure_min_inr = 4000000
+        total_exposure_max_inr = 8000000
+        scenario_matrix = []
+        executive_advisory = ""
+
+    class DummyQuery:
+        def filter(self, *args, **kwargs): return self
+        def order_by(self, *args, **kwargs): return self
+        def first(self): return DummyImpact()
+
+    class DummyDB:
+        def query(self, model): return DummyQuery()
+
+    scan = Scan(
+        id=9999,
+        target_domain="democorp.in",
+        status="completed",
+        total_assets=8,
+        total_cves=15,
+        end_time=datetime.utcnow()
+    )
+    a1 = Asset(id=1, hostname="api.democorp.in", risk_score=95, tech_stack={"subdomain_takeover": {"provider": "aws"}})
+    a2 = Asset(id=2, hostname="storage.democorp.in", risk_score=95, tech_stack={"public_s3": True})
+    a3 = Asset(id=3, hostname="db.democorp.in", risk_score=90)
+    c1 = CVE(cve_id="CVE-2023-1111", cvss_score=9.8)
+    a3.cves = [c1]
+    
+    a4 = Asset(id=4, hostname="admin.democorp.in", risk_score=75, admin_panels=[{"path": "/login"}])
+    a5 = Asset(id=5, hostname="portal.democorp.in", risk_score=75, admin_panels=[{"path": "/admin"}])
+    a6 = Asset(id=6, hostname="vpn.democorp.in", risk_score=70, ssl_info={"expired": True})
+    a7 = Asset(id=7, hostname="mail.democorp.in", risk_score=70)
+    c2 = CVE(cve_id="CVE-2023-2222", cvss_score=7.5)
+    a7.cves = [c2]
+    a8 = Asset(id=8, hostname="www.democorp.in", risk_score=10)
+    
+    scan.assets = [a1, a2, a3, a4, a5, a6, a7, a8]
+    
+    e1 = GraphEdge(source_id=0, target_id=4, relationship_type="EXPOSED", rule_id="NET-001")
+    e2 = GraphEdge(source_id=0, target_id=5, relationship_type="EXPOSED", rule_id="NET-001")
+    e3 = GraphEdge(source_id=0, target_id=1, relationship_type="TAKEOVER", rule_id="TAKEOVER-001")
+    e4 = GraphEdge(source_id=0, target_id=2, relationship_type="PUBLIC_S3", rule_id="CLOUD-001")
+    scan.edges = [e1, e2, e3, e4]
+    
+    from backend.intelligence.report import build_executive_pdf
+    pdf_bytes = build_executive_pdf(DummyDB(), scan)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="shadowtrace-demo-democorp-executive.pdf"'}
+    )
 
 
 @app.get("/impact", response_model=schemas.ImpactResponse)

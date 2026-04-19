@@ -42,6 +42,19 @@ function KillChainPage() {
     return <section className="page">Projecting attack chain...</section>;
   }
 
+  if (!data.killChainSteps || data.killChainSteps.length === 0) {
+    return (
+      <section className="page">
+        <div className="panel" style={{ textAlign: "center", padding: "4rem" }}>
+          <h3 style={{ color: "var(--text)" }}>No attack paths computed</h3>
+          <p className="section-copy" style={{ marginTop: "1rem" }}>
+            Run a scan from <a href="/scan" style={{ color: "var(--accent)" }}>Scan Setup</a> to compute attack paths and kill chains.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
   const pathConfidence = data.killChainSteps.find((s) => s.pathConfidence)?.pathConfidence || null;
   const confidenceStyle = {
     CONFIRMED: { color: "#86efac", bg: "rgba(34, 197, 94, 0.12)", border: "rgba(34, 197, 94, 0.4)", label: "TCP-verified end-to-end" },

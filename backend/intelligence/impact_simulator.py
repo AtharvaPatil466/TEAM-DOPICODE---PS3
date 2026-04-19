@@ -121,21 +121,28 @@ def _format_inr(amount: float) -> str:
         return f"₹{amount / 100000:.1f} L"
     return f"₹{amount:,.0f}"
 
-def _calculate_operational_loss(size_metrics: dict, industry_multiplier: float, max_tier_hit: int, max_cvss: float) -> dict:
+def _calculate_operational_loss(size_metrics: dict, industry_multiplier: float, max_tier_hit: int, max_cvss: float, asset_count: int, finding_count: int) -> dict:
     # 1. Downtime
-    # MTTR based on max CVSS exposed
-    mttr_low, mttr_high = (18, 72) if max_cvss >= 9.0 else (6, 24)
+    # MTTR scales with max_cvss and findings footprint
+    base_mttr = 4 + (max_cvss * 1.5) + (finding_count * 0.5)
+    mttr_low, mttr_high = max(4.0, base_mttr), max(12.0, base_mttr * 3.0)
+    
+    # Asset complexity multiplier
+    asset_mult = max(1.0, 1.0 + (asset_count * 0.15))
+    
     effective_hourly = size_metrics["hourly_revenue"] * industry_multiplier
-    downtime_min = mttr_low * effective_hourly
-    downtime_max = mttr_high * effective_hourly
+    downtime_min = mttr_low * effective_hourly * asset_mult
+    downtime_max = mttr_high * effective_hourly * asset_mult
     
-    # 2. Incident Response Fixed Range
-    ir_min = size_metrics["ir_low"]
-    ir_max = size_metrics["ir_high"]
+    # 2. Incident Response scales with complexity
+    ir_complexity = 1.0 + (finding_count * 0.08) + (max_cvss * 0.05)
+    ir_min = size_metrics["ir_low"] * ir_complexity
+    ir_max = size_metrics["ir_high"] * ir_complexity
     
-    # 3. Customer Churn
+    # 3. Customer Churn scales slightly with severity
     churn_rate = 0.12 if max_tier_hit == 1 else (0.05 if max_tier_hit == 2 else 0.01)
-    churn_cost = size_metrics["annual_revenue"] * churn_rate
+    churn_severity_mult = 1.0 + (max_cvss / 20.0) + (finding_count * 0.02)
+    churn_cost = size_metrics["annual_revenue"] * churn_rate * churn_severity_mult
     churn_min = churn_cost * 0.5
     churn_max = churn_cost * 1.5
     
@@ -311,11 +318,16 @@ def compute_impact(db, scan) -> Optional[dict]:
     if not paths:
         return None
         
+    asset_count = len(scan.assets) or 1
+    finding_count = sum(1 for a in scan.assets if getattr(a, 'cves', None) or getattr(a, 'admin_panels', None) or getattr(a, 'is_shadow_device', False) or getattr(a, 'ssl_info', None)) + len(paths)
+    
     max_cvss = max((hop.get("cvss") or 0.0 for p in paths for hop in p["hops"]), default=0.0)
+    if max_cvss == 0.0:
+        max_cvss = max((cve.cvss_score or 0.0 for a in scan.assets for cve in getattr(a, 'cves', [])), default=0.0)
 
     # 3. Calculators
     reg_exposure = _calculate_regulatory_exposure(size_metrics, max_tier_hit, processes_pii)
-    op_loss = _calculate_operational_loss(size_metrics, ind_mult, max_tier_hit, max_cvss)
+    op_loss = _calculate_operational_loss(size_metrics, ind_mult, max_tier_hit, max_cvss, asset_count, finding_count)
     
     tot_min = reg_exposure["min_inr"] + op_loss["total_min_inr"]
     tot_max = reg_exposure["max_inr"] + op_loss["total_max_inr"]

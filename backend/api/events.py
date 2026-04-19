@@ -54,6 +54,43 @@ class EventBus:
             self._scan_subscribers.get(scan_id, set()).discard(filtered)
             sink_task.cancel()
 
+    async def disconnect(self, ws: WebSocket) -> None:
+        async with self._lock:
+            self._clients.discard(ws)
+
+    async def reset_history(self) -> None:
+        async with self._lock:
+            self._history = []
+
+    async def publish(self, event_type: str, payload: dict[str, Any], scan_id: int | None = None) -> None:
+        event = {
+            "type": event_type,
+            "timestamp": datetime.utcnow().isoformat(),
+            "scan_id": scan_id,
+            "payload": payload,
+        }
+        self._history.append(event)
+        if len(self._history) > 1000:
+            self._history = self._history[-500:]
+        dead: list[WebSocket] = []
+        async with self._lock:
+            clients = list(self._clients)
+        for ws in clients:
+            try:
+                await ws.send_json(event)
+            except Exception:
+                dead.append(ws)
+        if dead:
+            async with self._lock:
+                for ws in dead:
+                    self._clients.discard(ws)
+        if scan_id is not None:
+            for q in list(self._scan_subscribers.get(scan_id, set())):
+                try:
+                    q.put_nowait(event)
+                except Exception:
+                    pass
+
 
 _PHASE_MESSAGES = {
     "subdomain_enum": "Enumerating subdomains",
@@ -130,43 +167,6 @@ def _to_prd_envelope(evt: dict) -> dict:
         "scan_id": evt.get("scan_id"),
         "timestamp": evt.get("timestamp"),
     }
-
-    async def disconnect(self, ws: WebSocket) -> None:
-        async with self._lock:
-            self._clients.discard(ws)
-
-    async def reset_history(self) -> None:
-        async with self._lock:
-            self._history = []
-
-    async def publish(self, event_type: str, payload: dict[str, Any], scan_id: int | None = None) -> None:
-        event = {
-            "type": event_type,
-            "timestamp": datetime.utcnow().isoformat(),
-            "scan_id": scan_id,
-            "payload": payload,
-        }
-        self._history.append(event)
-        if len(self._history) > 1000:
-            self._history = self._history[-500:]
-        dead: list[WebSocket] = []
-        async with self._lock:
-            clients = list(self._clients)
-        for ws in clients:
-            try:
-                await ws.send_json(event)
-            except Exception:
-                dead.append(ws)
-        if dead:
-            async with self._lock:
-                for ws in dead:
-                    self._clients.discard(ws)
-        if scan_id is not None:
-            for q in list(self._scan_subscribers.get(scan_id, set())):
-                try:
-                    q.put_nowait(event)
-                except Exception:
-                    pass
 
 
 bus = EventBus()

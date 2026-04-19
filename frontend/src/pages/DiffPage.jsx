@@ -1,12 +1,23 @@
-import { useState } from "react";
-import { fetchScanDiff } from "../services/api";
+import { useEffect, useState } from "react";
+import { fetchScanDiff, fetchScanHistory } from "../services/api";
 
 function DiffPage() {
+  const [scans, setScans] = useState([]);
   const [beforeId, setBeforeId] = useState("");
   const [afterId, setAfterId] = useState("");
   const [diff, setDiff] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    fetchScanHistory().then((history) => {
+      setScans(history || []);
+      if (history && history.length >= 2) {
+        setBeforeId(String(history[1].scan_id));
+        setAfterId(String(history[0].scan_id));
+      }
+    }).catch(() => {});
+  }, []);
 
   const handleCompare = async (e) => {
     e.preventDefault();
@@ -21,6 +32,9 @@ function DiffPage() {
     }
     setLoading(false);
   };
+
+  const scanLabel = (s) =>
+    `#${s.scan_id} — ${s.domain} (${s.total_assets} assets)`;
 
   return (
     <section className="page">
@@ -39,30 +53,33 @@ function DiffPage() {
         <form className="scan-form" onSubmit={handleCompare}>
           <div className="toggle-row">
             <label>
-              Before Scan ID
-              <input
-                type="number"
-                value={beforeId}
-                onChange={(e) => setBeforeId(e.target.value)}
-                placeholder="e.g. 1"
-                required
-              />
+              Before Scan
+              <select value={beforeId} onChange={(e) => setBeforeId(e.target.value)} required>
+                <option value="">Select a scan...</option>
+                {scans.map((s) => (
+                  <option key={s.scan_id} value={s.scan_id}>{scanLabel(s)}</option>
+                ))}
+              </select>
             </label>
             <label>
-              After Scan ID
-              <input
-                type="number"
-                value={afterId}
-                onChange={(e) => setAfterId(e.target.value)}
-                placeholder="e.g. 2"
-                required
-              />
+              After Scan
+              <select value={afterId} onChange={(e) => setAfterId(e.target.value)} required>
+                <option value="">Select a scan...</option>
+                {scans.map((s) => (
+                  <option key={s.scan_id} value={s.scan_id}>{scanLabel(s)}</option>
+                ))}
+              </select>
             </label>
           </div>
           <div className="cta-row">
-            <button type="submit" className="button primary" disabled={loading}>
+            <button type="submit" className="button primary" disabled={loading || !beforeId || !afterId}>
               {loading ? "Comparing..." : "Compare Scans"}
             </button>
+            {scans.length < 2 && (
+              <span className="chip" style={{ borderColor: "#fbbf24", color: "#fbbf24" }}>
+                Run at least 2 scans to use this feature
+              </span>
+            )}
           </div>
         </form>
       </div>
@@ -142,6 +159,20 @@ function DiffPage() {
               )}
             </div>
           </div>
+
+          {diff.assets_removed?.length > 0 && (
+            <div className="panel">
+              <p className="eyebrow">Assets Removed ({diff.assets_removed.length})</p>
+              <div className="action-list" style={{ marginTop: "0.75rem" }}>
+                {diff.assets_removed.slice(0, 8).map((asset, i) => (
+                  <div key={i} className="action-card">
+                    <h3>{asset.label}</h3>
+                    <p className="section-copy">Risk {asset.risk_score} · {asset.asset_type} · {asset.exposure}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {diff.edges_added?.length > 0 && (
             <div className="panel">

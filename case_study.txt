@@ -1,0 +1,26 @@
+SHADOWTRACE CASE STUDIES
+========================
+
+Domain: hackerone.com
+Scan Duration: 26s
+Assets Found: 5
+Critical Findings: 0
+High Findings: 5
+Rupee Exposure: ₹53.3 L (₹2,851,750 — ₹7,815,250)
+Top Findings:
+1. An administrator login page is exposed to the public internet at www.hackerone.com/admin — anyone on the internet can attempt to sign in.
+2. An attacker starting from the public internet can reach www.hackerone.com in 1 step(s) — this is the shortest modeled kill chain.
+3. TLS certificate on www.hackerone.com is mismatched hostname — browsers will warn your customers and attackers can impersonate the service.
+
+------------------------
+
+Domain: zerodha.com
+Scan Duration: 20s
+Assets Found: 6
+Critical Findings: 0
+High Findings: 6
+Rupee Exposure: ₹56.3 L (₹3,009,750 — ₹8,249,250)
+Top Findings:
+1. An administrator login page is exposed to the public internet at zerodha.com/manager/html — anyone on the internet can attempt to sign in.
+2. An attacker starting from the public internet can reach zerodha.com in 1 step(s) — this is the shortest modeled kill chain.
+3. TLS certificate on zerodha.com is mismatched hostname — browsers will warn your customers and attackers can impersonate the service.

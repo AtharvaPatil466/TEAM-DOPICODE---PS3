@@ -21,7 +21,7 @@ function NarrativeCard({ narrative }) {
   return (
     <section className="panel narrative-card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-        <p className="eyebrow">Executive framing</p>
+        <p className="eyebrow">Threat Narrative</p>
         {data.loading && (
           <span style={{ fontSize: "0.75rem", color: "#7dd3fc", background: "rgba(125, 211, 252, 0.1)", padding: "2px 8px", borderRadius: "4px", animation: "pulse 2s infinite" }}>
             AI generating...

@@ -524,99 +524,253 @@ def _plain_english_findings(scan: Scan, paths: list[dict]) -> list[str]:
 
 
 def build_executive_pdf(db: Session, scan: Scan) -> bytes:
-    """2-page executive report.
-
-    Page 1 (Fear): large centered rupee hero, risk gauge, top-5 findings in
-    plain English.
-    Page 2 (Fix): numbered prioritized action list ranked by paths blocked.
-    """
+    """2-page executive report conforming exactly to PRD layout."""
+    import os
     from sqlalchemy import desc as _desc
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.graphics.shapes import Drawing, Rect, Polygon, String
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+    
+    font_path = os.path.join(os.path.dirname(__file__), 'DejaVuSans.ttf')
+    font_name = "Helvetica"
+    if os.path.exists(font_path):
+        try:
+            pdfmetrics.registerFont(TTFont('DejaVu', font_path))
+            font_name = "DejaVu"
+        except Exception:
+            pass
+
     edges = build_edges(scan)
     g = to_networkx(scan, edges)
     paths = build_candidate_paths(scan, g, limit=25)
-    remediations = build_remediation_candidates(paths, scan)
+    remediations = build_remediation_candidates(paths)
     impact = db.query(ImpactReport).filter(ImpactReport.scan_id == scan.id).order_by(_desc(ImpactReport.id)).first()
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=letter, title=f"ShadowTrace Executive {scan.id}",
                             leftMargin=0.7 * inch, rightMargin=0.7 * inch,
-                            topMargin=0.6 * inch, bottomMargin=0.6 * inch)
+                            topMargin=0.5 * inch, bottomMargin=0.5 * inch)
     styles = getSampleStyleSheet()
-    brand = ParagraphStyle("brand", parent=styles["BodyText"], fontSize=10, leading=12,
-                           textColor=colors.HexColor("#6b7280"), alignment=1)
-    subtitle = ParagraphStyle("subtitle", parent=styles["BodyText"], fontSize=13, leading=16,
-                              textColor=colors.HexColor("#0b1220"), alignment=1)
-    hero = ParagraphStyle("hero", parent=styles["Heading1"], fontSize=64, leading=72,
-                          textColor=colors.HexColor("#c0392b"), alignment=1)
-    hero_caption = ParagraphStyle("hero_caption", parent=styles["BodyText"], fontSize=10,
-                                  leading=12, textColor=colors.HexColor("#6b7280"), alignment=1)
-    section = ParagraphStyle("section", parent=styles["Heading2"], fontSize=13, leading=16,
-                             textColor=colors.HexColor("#0b1220"), spaceBefore=8, spaceAfter=4)
-    fear_h1 = ParagraphStyle("fear_h1", parent=styles["Heading1"], fontSize=26, leading=30,
-                             textColor=colors.HexColor("#0b1220"), alignment=1)
-    body = _style_body()
+    
+    body = ParagraphStyle("body", parent=styles["BodyText"], fontSize=10, leading=13, fontName=font_name)
+    brand = ParagraphStyle("brand", parent=body, fontSize=10, textColor=colors.HexColor("#6b7280"))
+    date_r = ParagraphStyle("date_r", parent=body, alignment=TA_RIGHT, textColor=colors.grey)
+    hero_lbl = ParagraphStyle("hero_lbl", parent=body, alignment=TA_CENTER, fontSize=12, textColor=colors.grey)
+    hero = ParagraphStyle("hero", parent=styles["Heading1"], fontName=font_name, fontSize=48, leading=56, textColor=colors.HexColor("#8b0000"), alignment=TA_CENTER)
+    hero_cap = ParagraphStyle("hero_cap", parent=body, fontSize=14, textColor=colors.grey, alignment=TA_CENTER)
+    
     elems = []
 
     # ── Page 1: Fear ─────────────────────────────────────────────
-    elems.append(Paragraph("SHADOWTRACE EXECUTIVE BRIEF", brand))
-    elems.append(Paragraph(html.escape(scan.target_domain or "unknown"), subtitle))
-    elems.append(Spacer(1, 0.25 * inch))
-
-    elems.append(Paragraph("Estimated breach exposure", fear_h1))
-    elems.append(Spacer(1, 0.1 * inch))
+    date_str = scan.end_time.strftime("%Y-%m-%d") if scan.end_time else "Unknown"
+    h_table = Table([
+        [Paragraph(html.escape(scan.target_domain or "unknown"), brand), Paragraph(date_str, date_r)]
+    ], colWidths=[3.5*inch, 3.5*inch])
+    h_table.setStyle(TableStyle([
+        ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.grey),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 5),
+    ]))
+    elems.append(h_table)
+    elems.append(Spacer(1, 0.4 * inch))
+    
+    elems.append(Paragraph("Estimated Breach Exposure", hero_lbl))
+    elems.append(Spacer(1, 0.05 * inch))
+    
     if impact:
         hero_amount = _format_inr_hero(impact.total_exposure_min_inr, impact.total_exposure_max_inr)
         range_text = f"₹{impact.total_exposure_min_inr:,.0f} — ₹{impact.total_exposure_max_inr:,.0f}"
     else:
         hero_amount = "₹—"
         range_text = "Impact model not yet computed"
-    elems.append(Paragraph(hero_amount, hero))
-    elems.append(Paragraph(range_text, hero_caption))
-    elems.append(Spacer(1, 0.15 * inch))
-
+        
+    elems.append(Paragraph(f"<b>{hero_amount}</b>", hero))
+    elems.append(Spacer(1, 0.02 * inch))
+    elems.append(Paragraph(range_text, hero_cap))
+    elems.append(Spacer(1, 0.5 * inch))
+    
     max_risk = max((a.risk_score or 0 for a in scan.assets), default=0)
-    gauge = _risk_gauge(float(max_risk))
-    gauge.hAlign = "CENTER"
-    elems.append(gauge)
-    elems.append(Spacer(1, 0.2 * inch))
-
-    elems.append(Paragraph("Top findings", section))
-    findings = _plain_english_findings(scan, paths)
-    if findings:
-        for i, f in enumerate(findings, start=1):
-            elems.append(Paragraph(f"<b>{i}.</b> {html.escape(f)}", body))
-            elems.append(Spacer(1, 0.05 * inch))
-    else:
-        elems.append(Paragraph("No material findings — attack surface appears clean for the inputs provided.", body))
-
-    elems.append(PageBreak())
-
-    # ── Page 2: Fix ──────────────────────────────────────────────
-    elems.append(Paragraph("What to fix first", fear_h1))
-    elems.append(Spacer(1, 0.1 * inch))
-    elems.append(Paragraph(
-        "Remediations are ranked by how many modeled attack paths each one breaks. "
-        "Work top-down — each fix removes the largest remaining slice of risk.",
-        body,
+    
+    g_width = 5.76 * inch
+    d = Drawing(g_width, 30)
+    steps = 100
+    w_step = g_width / steps
+    for i in range(steps):
+        ratio = i / float(steps)
+        if ratio < 0.5:
+            r = 34 + (251 - 34) * (ratio * 2)
+            g_val = 197 + (191 - 197) * (ratio * 2)
+            b = 94 + (36 - 94) * (ratio * 2)
+        else:
+            r = 251 + (239 - 251) * ((ratio - 0.5) * 2)
+            g_val = 191 + (68 - 191) * ((ratio - 0.5) * 2)
+            b = 36 + (68 - 36) * ((ratio - 0.5) * 2)
+        color = colors.Color(r/255.0, g_val/255.0, b/255.0)
+        d.add(Rect(i * w_step, 10, w_step + 1.5, 15, fillColor=color, strokeColor=color, strokeWidth=0))
+        
+    needle_x = max(0, min(g_width, (max_risk / 100.0) * g_width))
+    d.add(Polygon(
+        points=[needle_x - 5, 25 + 5, needle_x + 5, 25 + 5, needle_x, 25 - 5],
+        fillColor=colors.HexColor("#0b1220"), strokeColor=colors.HexColor("#0b1220"),
     ))
-    elems.append(Spacer(1, 0.2 * inch))
+    d.add(String(0, 0, "Low Risk", fontSize=10, fontName=font_name, fillColor=colors.grey))
+    d.add(String(g_width - 60, 0, "Critical Risk", fontSize=10, fontName=font_name, fillColor=colors.grey))
+    d.hAlign = "CENTER"
+    elems.append(d)
+    elems.append(Spacer(1, 0.5 * inch))
+    
+    critical_assets = set()
+    high_assets = set()
+    
+    for a in scan.assets:
+        t = a.tech_stack if isinstance(a.tech_stack, dict) else {}
+        is_crit = False
+        
+        if t.get("subdomain_takeover") or t.get("public_s3"):
+            is_crit = True
+        else:
+            for c in a.cves:
+                if (c.cvss_score or 0.0) >= 9.0:
+                    is_crit = True
+                    break
+                    
+        if is_crit:
+            critical_assets.add(a.id)
+            continue
+            
+        is_high = False
+        if a.admin_panels:
+            is_high = True
+        else:
+            ssl_info = a.ssl_info if isinstance(a.ssl_info, dict) else {}
+            if ssl_info.get("expired") or not ssl_info.get("hostname_match", True):
+                is_high = True
+            else:
+                for c in a.cves:
+                    score = (c.cvss_score or 0.0)
+                    if 7.0 <= score < 9.0:
+                        is_high = True
+                        break
+                        
+        if is_high:
+            high_assets.add(a.id)
 
+    crit_count = len(critical_assets)
+    high_count = len(high_assets)
+    
+    stat_rows = [
+        [
+            Paragraph(f"<font color='white' size=10 fontName='{font_name}'><b>CRITICAL</b></font><br/><br/><font color='white' size=24 fontName='{font_name}'><b>{crit_count}</b></font>", ParagraphStyle("stat", alignment=TA_CENTER)),
+            Paragraph(f"<font color='white' size=10 fontName='{font_name}'><b>HIGH</b></font><br/><br/><font color='white' size=24 fontName='{font_name}'><b>{high_count}</b></font>", ParagraphStyle("stat", alignment=TA_CENTER)),
+            Paragraph(f"<font color='white' size=10 fontName='{font_name}'><b>ASSETS FOUND</b></font><br/><br/><font color='white' size=24 fontName='{font_name}'><b>{scan.total_assets}</b></font>", ParagraphStyle("stat", alignment=TA_CENTER))
+        ]
+    ]
+    stat_table = Table(stat_rows, colWidths=[2.3*inch, 2.3*inch, 2.3*inch], rowHeights=[1.0*inch])
+    stat_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#ef4444")),
+        ("BACKGROUND", (1, 0), (1, 0), colors.HexColor("#f97316")),
+        ("BACKGROUND", (2, 0), (2, 0), colors.HexColor("#3b82f6")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+    ]))
+    stat_table.hAlign = "CENTER"
+    elems.append(stat_table)
+    elems.append(Spacer(1, 0.4 * inch))
+    
+    elems.append(Paragraph("<b>Top Findings</b>", ParagraphStyle("sect", parent=styles["Heading2"], fontName=font_name, fontSize=16, textColor=colors.black)))
+    elems.append(Spacer(1, 0.05 * inch))
+    
+    findings = _plain_english_findings(scan, paths)
+    finding_rows = [
+        [Paragraph(f"<b>What We Found</b>", body), Paragraph(f"<b>Why It Matters</b>", body)]
+    ]
+    for f in findings[:5]:
+        parts = f.split(" — ")
+        what = parts[0] + "." if not parts[0].endswith(".") else parts[0]
+        why = parts[1].strip() if len(parts) > 1 else "Increases the overall attack surface."
+        why = why[0].upper() + why[1:]
+        finding_rows.append([Paragraph(what, body), Paragraph(why, body)])
+        
+    f_table = Table(finding_rows, colWidths=[3.5*inch, 3.5*inch])
+    f_table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#f1f5f9")),
+        ("GRID", (0,0), (-1,-1), 0.25, colors.lightgrey),
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("TOPPADDING", (0,0), (-1,-1), 8),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
+    ]))
+    f_table.hAlign = "CENTER"
+    elems.append(f_table)
+    
+    elems.append(PageBreak())
+    
+    # ── Page 2: Fix ──────────────────────────────────────────────
+    elems.append(Paragraph("<b>Your Action Plan</b>", ParagraphStyle("h1", parent=styles["Heading1"], fontName=font_name, fontSize=24, textColor=colors.black)))
+    elems.append(Spacer(1, 0.3 * inch))
+    
     if remediations:
-        for i, r in enumerate(remediations[:5], start=1):
-            elems.append(Paragraph(
-                f"<b>{i}. {html.escape(r['summary'])}</b>",
-                ParagraphStyle("rem_h", parent=body, fontSize=12, leading=15,
-                               textColor=colors.HexColor("#0b1220")),
-            ))
-            detail = f"Breaks <b>{r['blocks_paths']}</b> modeled attack path(s)"
-            if r.get("max_cvss"):
-                detail += f" · highest CVSS addressed: <b>{r['max_cvss']:.1f}</b>"
-            if r.get("rule_ids"):
-                detail += f" · rules: {', '.join(r['rule_ids'][:3])}"
-            elems.append(Paragraph(detail, body))
-            elems.append(Spacer(1, 0.18 * inch))
+        action_item_count = len(remediations[:3])
+        if impact:
+            displayed_midpoint = (impact.total_exposure_min_inr + impact.total_exposure_max_inr) / 2.0
+            max_reduction_per_item = (displayed_midpoint * 0.5) / action_item_count
+        else:
+            displayed_midpoint = 0.0
+            max_reduction_per_item = 0.0
+        
+        for i, r in enumerate(remediations[:3], 1):
+            assets_arr = r.get('target_assets', [])
+            first_asset = assets_arr[0] if assets_arr else "affected systems"
+            assets_affected = ", ".join(assets_arr[:3]) if assets_arr else first_asset
+            
+            frac = float(r['blocks_paths']) / max(1.0, float(len(paths)))
+            raw_reduction = displayed_midpoint * frac if impact else 0.0
+            reduction_estimate = min(raw_reduction, max_reduction_per_item)
+            reduction_inr = _format_inr_hero(reduction_estimate*0.6, reduction_estimate)
+            
+            rule = r.get('rule_ids', [''])[0] if r.get('rule_ids') else ''
+            title_prefix = "Remove public access from" if "CLOUD" in rule or "NET" in rule else ("Patch vulnerability on" if "EXP" in rule else "Secure")
+            
+            # Detailed descriptions
+            if "TAKEOVER" in rule:
+                a_obj = next((a for a in scan.assets if _asset_label(a) == first_asset), None)
+                provider = "a third-party provider"
+                if a_obj and isinstance(a_obj.tech_stack, dict) and a_obj.tech_stack.get("subdomain_takeover"):
+                    provider = a_obj.tech_stack["subdomain_takeover"].get("provider") or provider
+                desc = f"The subdomain {html.escape(first_asset)} has a dangling DNS record pointing to {html.escape(provider)} which has no active tenant. An attacker can claim this service and serve malicious content under your brand name to your users."
+            elif "MISC-001" in rule or "ADMIN" in rule:
+                desc = f"The admin login page at {html.escape(first_asset)} is publicly accessible from anywhere on the internet. Any attacker can attempt to guess or brute-force credentials to gain administrative access to your systems."
+            elif "CONF" in rule or "SSL" in rule:
+                desc = f"The security certificate on {html.escape(first_asset)} does not match the domain name. Users will see browser security warnings and attackers can intercept traffic between your users and this service."
+            elif "CLOUD" in rule or "S3" in rule:
+                desc = f"The storage bucket at {html.escape(first_asset)} is publicly readable by anyone on the internet. All files inside it are exposed including any sensitive data, credentials, or configuration files."
+            else:
+                desc = f"The service at {html.escape(first_asset)} has a security weakness that an attacker can exploit to gain unauthorised access."
+            
+            elems.append(Paragraph(f"<b>{i}. {title_prefix} {html.escape(assets_affected)}</b>", ParagraphStyle("rem_h", parent=body, fontSize=14, leading=16)))
+            elems.append(Spacer(1, 0.05 * inch))
+            elems.append(Paragraph(desc, body))
+            elems.append(Spacer(1, 0.05 * inch))
+            elems.append(Paragraph(f"<font color='#16a34a'><b>Fix:</b> {html.escape(r['summary'])}</font>", body))
+            elems.append(Spacer(1, 0.05 * inch))
+            elems.append(Paragraph(f"<b>Estimated Risk Reduction:</b> {reduction_inr}", body))
+            elems.append(Spacer(1, 0.25 * inch))
     else:
-        elems.append(Paragraph("No remediations generated — graph is empty.", body))
-
+        elems.append(Paragraph("No immediate action required.", body))
+        
+    elems.append(Spacer(1, 2.5 * inch))
+    
+    f_date = scan.end_time.strftime("%Y-%m-%d %H:%M:%S") if scan.end_time else "Unknown"
+    footer_table = Table([
+        [Paragraph(f"<font color='grey' size=8 fontName='{font_name}'>Generated by ShadowTrace</font>", body),
+         Paragraph(f"<font color='grey' size=8 fontName='{font_name}'>This report is confidential — prepared for {html.escape(scan.target_domain or '')} only</font>", ParagraphStyle("ca", parent=body, alignment=TA_CENTER)),
+         Paragraph(f"<font color='grey' size=8 fontName='{font_name}'>Timestamp: {f_date}</font>", ParagraphStyle("ra", parent=body, alignment=TA_RIGHT))]
+    ], colWidths=[2.3*inch, 2.5*inch, 2.3*inch])
+    footer_table.setStyle(TableStyle([
+        ("LINEABOVE", (0,0), (-1,0), 0.5, colors.grey),
+        ("TOPPADDING", (0,0), (-1,0), 8)
+    ]))
+    footer_table.hAlign = "CENTER"
+    elems.append(footer_table)
+    
     doc.build(elems)
     return buf.getvalue()

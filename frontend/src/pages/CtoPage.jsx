@@ -84,6 +84,19 @@ function CtoPage() {
     return <section className="page"><div className="panel">Loading CTO view…</div></section>;
   }
 
+  if (!data.findingRows || data.findingRows.length === 0) {
+    return (
+      <section className="page">
+        <div className="panel" style={{ textAlign: "center", padding: "4rem" }}>
+          <h3 style={{ color: "var(--text)" }}>No findings to show</h3>
+          <p className="section-copy" style={{ marginTop: "1rem" }}>
+            Run a scan from <a href="/scan" style={{ color: "var(--accent)" }}>Scan Setup</a> to populate the CTO view with actionable insights.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
   const rows = data.findingRows || [];
   const buckets = BUCKETS.map((b) => ({
     ...b,

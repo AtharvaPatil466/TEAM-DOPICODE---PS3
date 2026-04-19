@@ -198,10 +198,18 @@ function buildFindingRows(assets) {
     });
 }
 
-function buildTopActions(findingRows) {
+function buildTopActions(findingRows, remediations) {
+  if (remediations && remediations.length > 0) {
+    return remediations.slice(0, 3).map((r) => ({
+      title: r.target_asset || "Asset",
+      detail: r.fix_action,
+      blocks_paths: r.blocks_paths
+    }));
+  }
   return findingRows.slice(0, 3).map((row) => ({
     title: `${row.asset}: ${row.kind}`,
-    detail: row.action
+    detail: row.action,
+    blocks_paths: 1
   }));
 }
 
@@ -817,7 +825,7 @@ export async function fetchDashboardData() {
       ],
       validationCounts,
       narrative,
-      topActions: buildTopActions(findingRows),
+      topActions: buildTopActions(findingRows, attackPath?.remediation_candidates),
       findingRows,
       graph: graphModel,
       nodeDetails: buildNodeDetails(graphModel, assetsById, latestScan),
@@ -855,6 +863,15 @@ export async function fetchCompliance() {
 
 export async function fetchScanDiff(beforeId, afterId) {
   return fetchJson(`/scan/diff?before=${beforeId}&after=${afterId}`);
+}
+
+export async function fetchScanHistory() {
+  try {
+    return await fetchJson("/scan/history");
+  } catch (error) {
+    if (error.status === 404) return [];
+    throw error;
+  }
 }
 
 export async function fetchRulebook() {

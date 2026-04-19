@@ -73,6 +73,19 @@ function SimulatePage() {
     return <section className="page">Loading asset inventory...</section>;
   }
 
+  if (!data.findingRows || data.findingRows.length === 0) {
+    return (
+      <section className="page">
+        <div className="panel" style={{ textAlign: "center", padding: "4rem" }}>
+          <h3 style={{ color: "var(--text)" }}>No assets to simulate</h3>
+          <p className="section-copy" style={{ marginTop: "1rem" }}>
+            Run a scan from <a href="/scan" style={{ color: "var(--accent)" }}>Scan Setup</a> first, then come back to simulate remediation effects.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
   // Collect all CVEs from findings
   const allCves = [];
   data.findingRows.forEach((row) => {
